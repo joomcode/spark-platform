@@ -1,0 +1,23 @@
+rootProject.name = 'spark-platform'
+include('lib')
+
+enableFeaturePreview('VERSION_CATALOGS')
+
+//dependencyResolutionManagement {
+//    versionCatalogs {
+//        libs {
+//	        alias('spark-core').to('org.apache.spark:spark-core_2.12:3.2.1')
+//        }
+//    }
+//}
+
+boolean isCiServer = System.getenv().containsKey("CI")
+
+buildCache {
+    remote(HttpBuildCache) {
+        url = 'https://gradle-cache.joom.ai/cache/'
+        allowUntrustedServer = true
+        allowInsecureProtocol = true
+        push = isCiServer
+    }
+}
