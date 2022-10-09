@@ -8,7 +8,7 @@ plugins {
 final def scalaVersion = getScalaVersion()
 final def scalaLibraryVersion = getScalaLibraryVersion()
 
-final def sparkVersion = '3.2.1'
+final def sparkVersion = '3.2.2'
 
 dependencies {
     // We use Spark in API, so clients will need it when compiling
