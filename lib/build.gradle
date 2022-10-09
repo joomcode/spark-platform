@@ -1,5 +1,6 @@
 plugins {
     id 'scala'
+    id 'java-library'
     id 'maven-publish'
     id 'signing'
 }
@@ -10,10 +11,17 @@ final def scalaLibraryVersion = getScalaLibraryVersion()
 final def sparkVersion = '3.2.1'
 
 dependencies {
-    implementation "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
-    implementation "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
+    // We use Spark in API, so clients will need it when compiling
+    // In most cases, the actual Spark code should be provided by the
+    // execution envrionment, so compileOnlyApi is more technically correct than api
+    // although the generated POM is the same regardless
+    compileOnlyApi "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
+    compileOnlyApi "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
 
     compileOnly "org.scala-lang:scala-library:$scalaLibraryVersion"
+
+    testImplementation "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
+    testImplementation "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
 
     testImplementation "org.scalatest:scalatest_$scalaVersion:3.0.8"
     testImplementation "junit:junit:4.13.2"
