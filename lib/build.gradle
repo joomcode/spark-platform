@@ -78,7 +78,7 @@ publishing {
                 }
                 organization {
                     name = 'Joom'
-                    url = 'https://joom.com'
+                    url = 'https://joom-group.com'
                 }
                 developers {
                     developer {
