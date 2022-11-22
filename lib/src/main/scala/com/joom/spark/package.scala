@@ -3,6 +3,8 @@ package com.joom
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.MillisToTs
+import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.types.{DataType, StructType}
 
 package object spark {
 
@@ -43,6 +45,48 @@ package object spark {
         val e = RowEncoder(df.schema)
         new DataFrame(sparkSession,
           ExplicitRepartition(partitionExpression.expr, df.queryExecution.analyzed, numPartitions), e)
+      }
+    }
+
+    implicit class DropNestedColumnWrapper(df: DataFrame) {
+      def dropNestedColumn(colName: String): DataFrame = {
+        df.schema.fields
+          .flatMap(f => {
+            if (colName.startsWith(s"${f.name}.")) {
+              dropSubColumn(col(f.name), f.dataType, f.name, colName) match {
+                case Some(x) => Some((f.name, x))
+                case None => None
+              }
+            } else {
+              None
+            }
+          })
+          .foldLeft(df.drop(colName)) {
+            case (df, (colName, column)) => df.withColumn(colName, column)
+          }
+      }
+
+      private def dropSubColumn(col: Column, colType: DataType, fullColName: String, dropColName: String): Option[Column] = {
+        if (fullColName.equals(dropColName)) {
+          None
+        } else {
+          colType match {
+            case colType: StructType =>
+              if (dropColName.startsWith(s"$fullColName.")) {
+                Some(struct(
+                  colType.fields
+                    .flatMap(f =>
+                      dropSubColumn(col.getField(f.name), f.dataType, s"$fullColName.${f.name}", dropColName) match {
+                        case Some(x) => Some(x.alias(f.name))
+                        case None => None
+                      })
+                    : _*))
+              } else {
+                Some(col)
+              }
+            case _ => Some(col)
+          }
+        }
       }
     }
   }
