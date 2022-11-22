@@ -13,7 +13,7 @@ case class Entry(value: String, desired_partition: Int, partition: Int)
 class ExplicitRepartitionSpec extends FlatSpec with Matchers {
 
   implicit val spark = SparkSession
-    .builder
+    .builder()
     .master("local[1]")
     .getOrCreate()
   spark.experimental.extraStrategies = Seq(ExplicitRepartitionStrategy)

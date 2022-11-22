@@ -14,7 +14,7 @@ case class Event(event_ts: Option[Long])
 @RunWith(classOf[JUnitRunner])
 class MillisToTsSpec extends FlatSpec with Matchers {
   implicit val spark = SparkSession
-    .builder
+    .builder()
     .master("local[1]")
     .getOrCreate()
 
