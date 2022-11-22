@@ -5,6 +5,7 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 
 import java.io.IOException
 
+/*
 package object spark {
 
   object implicits {
@@ -17,4 +18,4 @@ package object spark {
       }
     }
   }
-}
+}*/
