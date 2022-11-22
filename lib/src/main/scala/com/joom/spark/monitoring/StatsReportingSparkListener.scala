@@ -6,7 +6,6 @@ import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd, SparkListenerExecutorAdded, SparkListenerExecutorMetricsUpdate, SparkListenerExecutorRemoved, SparkListenerStageCompleted, SparkListenerStageSubmitted, SparkListenerTaskEnd, SparkListenerTaskStart}
 import com.github.plokhotnyuk.jsoniter_scala.macros._
 import com.github.plokhotnyuk.jsoniter_scala.core._
-import com.joom.spark.using
 import okhttp3.{MediaType, OkHttpClient, Request, RequestBody}
 import org.slf4j.LoggerFactory
 
@@ -181,7 +180,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
 object StatsReportingSparkListener {
   private val GiB = math.pow(1024, 3)
   private val AppNameKey = "spark.app.name"
-  private val BaseUrl = "https://app-performance-proxy.joom.ai/v1/"
+  private val BaseUrl = "https://api.cloud.joom.ai/v1/sparkperformance/"
 
   private def sigma(values: Seq[Double]) = {
     if (values.isEmpty) 0
