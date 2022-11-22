@@ -17,6 +17,7 @@ dependencies {
     // although the generated POM is the same regardless
     compileOnlyApi "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
     compileOnlyApi "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
+    compileOnlyApi "org.apache.spark:spark-catalyst_$scalaVersion:$sparkVersion"
 
     compileOnly "org.scala-lang:scala-library:$scalaLibraryVersion"
 
