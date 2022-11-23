@@ -1,9 +1,9 @@
 package com.joom
 
-import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.{Column, DataFrame, Dataset}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.MillisToTs
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.functions.{coalesce, col, hash, lit, struct, concat}
 import org.apache.spark.sql.types.{DataType, StructType}
 
 package object spark {
@@ -87,6 +87,24 @@ package object spark {
             case _ => Some(col)
           }
         }
+      }
+    }
+
+    implicit class DatasetWrapper(ds: Dataset[_]) {
+
+      def joinAvoidSkewDueToNulls(right: Dataset[_], leftJoinCol: String, rightJoinCol: String, joinType: String): DataFrame = {
+        val joinColName = "_joinColName"
+
+        // Input to function hash cannot contain elements of MapType, since in Spark, same maps may have different hashcode.
+        def colsWithoutMaps(ds: Dataset[_]) = ds.schema.fields
+          .filterNot(_.dataType.catalogString.contains("map<"))
+          .map(f => col(f.name))
+
+        val dsEx = ds.withColumn(joinColName, coalesce(ds(leftJoinCol), concat(lit("left"), hash(colsWithoutMaps(ds): _*))))
+        val rightEx = right.withColumn(joinColName, coalesce(right(rightJoinCol), concat(lit("right"), hash(colsWithoutMaps(right): _*))))
+
+        dsEx.join(rightEx, Seq(joinColName), joinType)
+          .drop(joinColName)
       }
     }
   }
