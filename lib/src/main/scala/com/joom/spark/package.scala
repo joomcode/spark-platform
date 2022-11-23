@@ -109,4 +109,6 @@ package object spark {
     }
   }
 
+  // Extra optimization strategies needed to make our extensions work.
+  def extraStrategies = Seq(DeduplicateWithinPartitionsStrategy, ExplicitRepartitionStrategy)
 }
