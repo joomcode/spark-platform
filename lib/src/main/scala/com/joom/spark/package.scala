@@ -6,6 +6,8 @@ import org.apache.spark.sql.catalyst.expressions.MillisToTs
 import org.apache.spark.sql.functions.{coalesce, col, hash, lit, struct, concat}
 import org.apache.spark.sql.types.{DataType, StructType}
 
+import java.io.IOException
+
 package object spark {
 
   /** Convert long millisecond-since-epoch value into Timestamp type */
@@ -111,4 +113,19 @@ package object spark {
 
   // Extra optimization strategies needed to make our extensions work.
   def extraStrategies = Seq(DeduplicateWithinPartitionsStrategy, ExplicitRepartitionStrategy)
+
+  def using[T <: {def close()}, R](resource: T)(block: T => R): R = {
+    try {
+      block(resource)
+    } finally {
+      if (resource != null) {
+        try {
+          resource.close()
+        } catch {
+          case e: IOException => println(s"Cannot close resource. $e")
+        }
+      }
+    }
+  }
+
 }
