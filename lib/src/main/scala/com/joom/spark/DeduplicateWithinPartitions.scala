@@ -42,7 +42,7 @@ import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 
         val keysProjection = UnsafeProjection.create(comparisonKeys, child.output)
         new Iterator[InternalRow] {
-          var value: Option[InternalRow] = if (it.hasNext) Some(it.next().copy) else None
+          var value: Option[InternalRow] = if (it.hasNext) Some(it.next().copy()) else None
           override def hasNext: Boolean = value.isDefined
 
           override def next(): InternalRow = {

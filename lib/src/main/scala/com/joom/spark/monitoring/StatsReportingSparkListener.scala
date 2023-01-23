@@ -17,6 +17,18 @@ import java.io.IOException
 import scala.collection.mutable
 
 class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends SparkListener {
+
+  def this(sparkConf: SparkConf) = {
+    this(sparkConf, {
+      val apiKey: String = sparkConf.getOption("joom.cloud.token").getOrElse(sys.env.getOrElse("JOOM_CLOUD_TOKEN", ""))
+      if (apiKey.isEmpty) {
+        throw new RuntimeException("Could not find Joom Cloud token." +
+          "Neither joom.cloud.token configuration nor JOOM_CLOUD_TOKEN environment var have non-empty value")
+      }
+      apiKey
+    })
+  }
+
   import StatsReportingSparkListener._
   private val appId = sparkConf.getAppId
   private val appName = sparkConf.get(AppNameKey)
@@ -85,7 +97,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
   }
 
   override def onStageSubmitted(stageSubmitted: SparkListenerStageSubmitted): Unit = {
-    val stageFullId = StageFullId(stageSubmitted.stageInfo.stageId, stageSubmitted.stageInfo.attemptNumber)
+    val stageFullId = StageFullId(stageSubmitted.stageInfo.stageId, stageSubmitted.stageInfo.attemptNumber())
     stageState.getOrElseUpdate(stageFullId, StageState())
   }
 

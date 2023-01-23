@@ -114,7 +114,7 @@ package object spark {
   // Extra optimization strategies needed to make our extensions work.
   def extraStrategies = Seq(DeduplicateWithinPartitionsStrategy, ExplicitRepartitionStrategy)
 
-  def using[T <: {def close()}, R](resource: T)(block: T => R): R = {
+  def using[T <: {def close(): Unit}, R](resource: T)(block: T => R): R = {
     try {
       block(resource)
     } finally {

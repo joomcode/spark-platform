@@ -11,7 +11,7 @@ class DatasetWrapperSpec extends FlatSpec with Matchers {
   implicit def toOption[T](v: T): Some[T] = Some(v)
 
   implicit val spark = SparkSession
-    .builder
+    .builder()
     .master("local[1]")
     .getOrCreate()
   import spark.implicits._
