@@ -61,7 +61,7 @@ publishing {
         maven(MavenPublication) {
             groupId = 'com.joom.spark'
             artifactId = "spark-platform_$scalaVersion"
-            version = '0.3.1'
+            version = '0.3.2'
 
             from components.java
 
