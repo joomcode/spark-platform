@@ -20,10 +20,10 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
 
   def this(sparkConf: SparkConf) = {
     this(sparkConf, {
-      val apiKey: String = sparkConf.getOption("joom.cloud.token").getOrElse(sys.env.getOrElse("JOOM_CLOUD_TOKEN", ""))
+      val apiKey: String = sparkConf.getOption("spark.joom.cloud.token").getOrElse(sys.env.getOrElse("JOOM_CLOUD_TOKEN", ""))
       if (apiKey.isEmpty) {
         throw new RuntimeException("Could not find Joom Cloud token." +
-          "Neither joom.cloud.token configuration nor JOOM_CLOUD_TOKEN environment var have non-empty value")
+          "Neither spark.joom.cloud.token configuration nor JOOM_CLOUD_TOKEN environment var have non-empty value")
       }
       apiKey
     })

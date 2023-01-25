@@ -14,7 +14,7 @@ class StatsListenerSpec  extends FlatSpec with Matchers {
     .builder()
     .master("local[1]")
     .config("spark.extraListeners", "com.joom.spark.monitoring.StatsReportingSparkListener")
-    .config("joom.cloud.token", "xxx")
+    .config("spark.joom.cloud.token", "xxx")
     .getOrCreate()
 
   "everything" should "work" in {
