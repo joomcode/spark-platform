@@ -94,6 +94,12 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
       Thread.sleep(100)
       millis -= 100
     }
+
+    // While okHttp will eventually exit the daemon threads, it can lead to
+    // a half-a-minute delay at the end of the job, where nothing happens,
+    // but the job is still running from K8S/Airflow point of view.
+    httpClient.dispatcher.executorService.shutdown()
+    httpClient.connectionPool.evictAll()
   }
 
   override def onStageSubmitted(stageSubmitted: SparkListenerStageSubmitted): Unit = {
