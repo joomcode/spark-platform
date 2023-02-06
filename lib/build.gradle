@@ -36,8 +36,10 @@ repositories {
     mavenCentral()
 }
 
-compileJava {
-    options.release = 8
+java {
+    toolchain {
+        targetCompatibility = JavaLanguageVersion.of(8)
+    }
 }
 
 scaladoc {
