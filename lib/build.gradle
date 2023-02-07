@@ -22,8 +22,10 @@ dependencies {
     compileOnly "org.scala-lang:scala-library:$scalaLibraryVersion"
 
     implementation "com.squareup.okhttp3:okhttp:4.10.0"
-    implementation "com.github.plokhotnyuk.jsoniter-scala:jsoniter-scala-core_$scalaVersion:2.17.4"
-    implementation "com.github.plokhotnyuk.jsoniter-scala:jsoniter-scala-macros_$scalaVersion:2.17.4"
+    // 2.13.5 is the last release that supports Java 8, and Java 8 is the only official
+    // supported for Databricks. Java 11 is only in preview for Databricks 10.
+    implementation "com.github.plokhotnyuk.jsoniter-scala:jsoniter-scala-core_$scalaVersion:2.13.5"
+    implementation "com.github.plokhotnyuk.jsoniter-scala:jsoniter-scala-macros_$scalaVersion:2.13.5"
     implementation "io.reactivex.rxjava3:rxjava:3.1.5"
 
     testImplementation "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
