@@ -27,10 +27,13 @@ jobs:
           java-version: 11
           cache: 'gradle'
 
-      - name: Build and Test
+      - name: Build
+        run: ./gradlew build -x test -Pscala.version=${{ matrix.scala }}
+
+      - name: Test
         env:
           JOOM_CLOUD_TOKEN: ${{ secrets.JOOM_CLOUD_TOKEN }}
-        run: ./gradlew build -Pscala.version=${{ matrix.scala }}
+        run: ./gradlew test -Pscala.version=${{ matrix.scala }} -i
 
       - name: Upload Artifacts
         if: contains(github.ref, '/tags/v')
