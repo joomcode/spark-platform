@@ -57,3 +57,8 @@ case class ExecutorRemoved(
                             executorId: String,
                             reason: String,
                           )
+
+case class AbruptShutdown(
+                         ts: Long,
+                         appId: String
+                         )

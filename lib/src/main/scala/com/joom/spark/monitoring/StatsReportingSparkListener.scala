@@ -57,6 +57,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
   // for retries, some events will be dropped by Spark. So, we handle http in another
   // thread.
   private val sendQueue = PublishSubject.create[KindAndPayload]()
+  @volatile private var sendQueueCompleting = false
   @volatile private var sendQueueCompleted = false
   sendQueue
     .toFlowable(BackpressureStrategy.MISSING)
@@ -72,6 +73,37 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
 
   send("apps", ApplicationSummary(appStart.toEpochMilli, appId, appName, sparkConf.getAll.toMap))
 
+  Runtime.getRuntime.addShutdownHook(new Thread() {
+    override def run() = {
+      if (!sendQueueCompleting) {
+        implicit val codec = JsonCodecMaker.make[AbruptShutdown]
+        // At this point, we don't have application end event, but let's still send the
+        // indication that app is dead
+        send("abruptShutdown", AbruptShutdown(Instant.now().toEpochMilli, appId))
+        completeQueue()
+      }
+    }
+  })
+
+  def completeQueue(): Unit = {
+    // Send the completion down the queue, and wait for sendQueueCompleted to
+    // be set, which means we've processed everything. Only wait for a little
+    // while, though.
+    sendQueueCompleting = true
+    sendQueue.onComplete()
+    var millis = 1000;
+    while (!sendQueueCompleted && millis > 0) {
+      Thread.sleep(100)
+      millis -= 100
+    }
+
+    // While okHttp will eventually exit the daemon threads, it can lead to
+    // a half-a-minute delay at the end of the job, where nothing happens,
+    // but the job is still running from K8S/Airflow point of view.
+    httpClient.dispatcher.executorService.shutdown()
+    httpClient.connectionPool.evictAll()
+  }
+
   override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
     stageState.filter { case (_, state) => !state.sent && state.completed }.foreach { case (stageFullId, _) =>
       sendStageSummaryIfReady(stageFullId, force = true)
@@ -85,21 +117,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
       }.toMap)
     ))
 
-    // Send the completion down the queue, and wait for sendQueueCompleted to
-    // be set, which means we've processed everything. Only wait for a little
-    // while, though.
-    sendQueue.onComplete()
-    var millis = 1000;
-    while (!sendQueueCompleted && millis > 0) {
-      Thread.sleep(100)
-      millis -= 100
-    }
-
-    // While okHttp will eventually exit the daemon threads, it can lead to
-    // a half-a-minute delay at the end of the job, where nothing happens,
-    // but the job is still running from K8S/Airflow point of view.
-    httpClient.dispatcher.executorService.shutdown()
-    httpClient.connectionPool.evictAll()
+    completeQueue()
   }
 
   override def onStageSubmitted(stageSubmitted: SparkListenerStageSubmitted): Unit = {
@@ -202,7 +220,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
     sendQueue.onNext(KindAndPayload(kind, "[" + json + "]"))
   }
 
-  private def sendReally[Record](kind: String, json: String): Unit = {
+  private def sendReally(kind: String, json: String): Unit = {
     val body = RequestBody.create(MediaType.parse("application/json; charset=utf-8"), json)
     val request = new Request.Builder()
       .url(BaseUrl + kind)
