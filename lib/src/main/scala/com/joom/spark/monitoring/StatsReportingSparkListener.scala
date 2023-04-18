@@ -79,12 +79,14 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
     // Break batches by event kind
     .filter(b => !b.isEmpty)
     .flatMapIterable((b: java.util.List[KindAndPayload]) => {
-      b.asScala.groupBy(_.kind).values.map(f => f.asJava).toList.asJava
-    })
+      b.asScala.groupBy(_.kind).values.map(f => f.toSeq).toIterable.asJava
+    }: java.lang.Iterable[Seq[KindAndPayload]])
     // Do processing.
     .parallel(4)
-    .map(b => {
-      sendReally(b)
+    .map[Boolean](new io.reactivex.rxjava3.functions.Function[Seq[KindAndPayload], Boolean] {
+      def apply(b: Seq[KindAndPayload]) = {
+        sendReally(b)
+      }
     })
     // Just wrap it up.
     .sequential()
@@ -244,8 +246,8 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
     sendQueue.onNext(KindAndPayload(kind, json))
   }
 
-  private def sendReally(b: java.util.List[KindAndPayload]): Boolean = {
-    sendReally(b.get(0).kind, b.asScala.map(_.payload).mkString("[", ",", "]"))
+  private def sendReally(b: Seq[KindAndPayload]): Boolean = {
+    sendReally(b(0).kind, b.map(_.payload).mkString("[", ",", "]"))
     true
   }
 
