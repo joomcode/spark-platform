@@ -28,6 +28,8 @@ jobs:
           cache: 'gradle'
 
       - name: Build and Test
+        env:
+          JOOM_CLOUD_TOKEN: ${{ secrets.JOOM_CLOUD_TOKEN }}
         run: ./gradlew build -Pscala.version=${{ matrix.scala }}
 
       - name: Upload Artifacts
