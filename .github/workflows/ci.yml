@@ -28,7 +28,7 @@ jobs:
           cache: 'gradle'
 
       - name: Build
-        run: ./gradlew build -x test -Pscala.version=${{ matrix.scala }}
+        run: ./gradlew build -x testJdk8 -Pscala.version=${{ matrix.scala }}
 
       - name: Test
         env:
