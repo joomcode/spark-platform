@@ -7,14 +7,16 @@ import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd, S
 import com.github.plokhotnyuk.jsoniter_scala.macros._
 import com.github.plokhotnyuk.jsoniter_scala.core._
 import com.joom.spark.using
-import io.reactivex.rxjava3.core.BackpressureStrategy
+import io.reactivex.rxjava3.core.{BackpressureStrategy, Observable}
 import io.reactivex.rxjava3.schedulers.Schedulers
 import okhttp3.{MediaType, OkHttpClient, Request, RequestBody}
 import io.reactivex.rxjava3.subjects.PublishSubject
 import org.slf4j.LoggerFactory
 
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import scala.collection.mutable
+import scala.collection.JavaConverters._
 
 class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends SparkListener {
 
@@ -60,11 +62,33 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
   @volatile private var sendQueueCompleting = false
   @volatile private var sendQueueCompleted = false
   sendQueue
+    // The API latency from across the world can be as much as 1s.
+    // While we allow several API calls in parallel, it would be
+    // rather wasteful to make a call per each event, so let's
+    // block to something reasonable. Most events are from stages,
+    // so with 0.5s buffer and 1s latency, there will be at most
+    // two parallel requests, and 4 threads below should cope just
+    // fine.
+    .buffer(500, TimeUnit.MILLISECONDS, 20)
+    // Now configure backpressure strategy, in case we still can't
+    // handle.
     .toFlowable(BackpressureStrategy.MISSING)
     .onBackpressureDrop(s => println(s"Dropping listener event ${s}"))
-    .observeOn(Schedulers.io(), false, 200)
-    .subscribe((request: KindAndPayload) => {
-      sendReally(request.kind, request.payload)
+    // Switch to io thread. Buffer up to 20 batches.
+    .observeOn(Schedulers.io(), false, 20)
+    // Break batches by event kind
+    .filter(b => !b.isEmpty)
+    .flatMapIterable((b: java.util.List[KindAndPayload]) => {
+      b.asScala.groupBy(_.kind).values.map(f => f.asJava).toList.asJava
+    })
+    // Do processing.
+    .parallel(4)
+    .map(b => {
+      sendReally(b)
+    })
+    // Just wrap it up.
+    .sequential()
+    .subscribe((b: Boolean) => {
     }, (_: Throwable) => {},
       () => {
         sendQueueCompleted = true;
@@ -217,7 +241,12 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
 
   private def send[Record](kind: String, record: Record)(implicit codec: JsonValueCodec[Record]): Unit = {
     val json = writeToString(record)
-    sendQueue.onNext(KindAndPayload(kind, "[" + json + "]"))
+    sendQueue.onNext(KindAndPayload(kind, json))
+  }
+
+  private def sendReally(b: java.util.List[KindAndPayload]): Boolean = {
+    sendReally(b.get(0).kind, b.asScala.map(_.payload).mkString("[", ",", "]"))
+    true
   }
 
   private def sendReally(kind: String, json: String): Unit = {
