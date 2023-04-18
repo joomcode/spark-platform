@@ -10,13 +10,17 @@ import org.scalatestplus.junit.JUnitRunner
 case class Entry(value: String, desired_partition: Int, partition: Int)
 
 @RunWith(classOf[JUnitRunner])
-class ExplicitRepartitionSpec extends FlatSpec with Matchers {
+class ExplicitRepartitionSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   implicit val spark = SparkSession
     .builder()
     .master("local[1]")
     .getOrCreate()
   spark.experimental.extraStrategies = Seq(ExplicitRepartitionStrategy)
+
+  override def afterAll() = {
+    spark.stop()
+  }
 
   "it" should "work" in {
     import spark.implicits._

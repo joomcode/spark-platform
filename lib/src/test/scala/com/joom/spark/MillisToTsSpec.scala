@@ -12,11 +12,15 @@ import org.scalatestplus.junit.JUnitRunner
 case class Event(event_ts: Option[Long])
 
 @RunWith(classOf[JUnitRunner])
-class MillisToTsSpec extends FlatSpec with Matchers {
+class MillisToTsSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
   implicit val spark = SparkSession
     .builder()
     .master("local[1]")
     .getOrCreate()
+
+  override def afterAll() = {
+    spark.stop()
+  }
 
   "millis_to_ts" should "work" in {
     import spark.implicits._

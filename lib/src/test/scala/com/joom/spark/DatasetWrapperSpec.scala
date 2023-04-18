@@ -2,12 +2,12 @@ package com.joom.spark
 
 import org.apache.spark.sql.SparkSession
 import org.junit.runner.RunWith
-import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.{BeforeAndAfterAll, FlatSpec, Matchers}
 import org.scalatestplus.junit.JUnitRunner
 import com.joom.spark.implicits._
 
 @RunWith(classOf[JUnitRunner])
-class DatasetWrapperSpec extends FlatSpec with Matchers {
+class DatasetWrapperSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
   implicit def toOption[T](v: T): Some[T] = Some(v)
 
   implicit val spark = SparkSession
@@ -15,6 +15,10 @@ class DatasetWrapperSpec extends FlatSpec with Matchers {
     .master("local[1]")
     .getOrCreate()
   import spark.implicits._
+
+  override def afterAll() = {
+    spark.stop()
+  }
 
   "joinAvoidSkewDueToNulls" should "give a result identical to the standard join" in {
     val devices = Seq(

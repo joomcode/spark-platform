@@ -3,7 +3,7 @@ package com.joom.spark
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.junit.runner.RunWith
-import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.{FlatSpec, Matchers, BeforeAndAfterAll }
 import org.scalatestplus.junit.JUnitRunner
 
 import scala.util.Random
@@ -11,13 +11,17 @@ import scala.util.Random
 case class Result(source: Long, duplicate: Long, missing: Long)
 
 @RunWith(classOf[JUnitRunner])
-class CheckEventSequenceSpec  extends FlatSpec with Matchers {
+class CheckEventSequenceSpec  extends FlatSpec with Matchers with BeforeAndAfterAll {
   implicit val spark = SparkSession
     .builder()
     .master("local[1]")
     .config("spark.default.parallelism", "20")
     .config("spark.sql.shuffle.partitions", "20")
     .getOrCreate()
+
+  override def afterAll() = {
+    spark.stop()
+  }
 
   "everything" should "work" in {
     Random.setSeed(616001)

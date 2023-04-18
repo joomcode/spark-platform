@@ -8,13 +8,17 @@ import org.scalatestplus.junit.JUnitRunner
 import com.joom.spark.implicits._
 
 @RunWith(classOf[JUnitRunner])
-class DropNestedColumnsSpec extends FlatSpec with Matchers {
+class DropNestedColumnsSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   implicit val spark = SparkSession
     .builder()
     .master("local[1]")
     .config("spark.driver.bindAddress", "127.0.0.1")
     .getOrCreate()
+
+  override def afterAll() = {
+    spark.stop()
+  }
 
   "it" should "remove exising nested" in {
     import spark.implicits._
