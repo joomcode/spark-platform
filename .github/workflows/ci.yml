@@ -1,6 +1,9 @@
 name: Build and Publish
 
-on: [push, pull_request]
+on:
+   push:
+   pull_request:
+   workflow_dispatch:
 
 env:
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false -Dkotlin.incremental=false"
