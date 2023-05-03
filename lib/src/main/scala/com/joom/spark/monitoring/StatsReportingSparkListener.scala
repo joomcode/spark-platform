@@ -301,7 +301,6 @@ object StatsReportingSparkListener {
       // The number of stages is low, and sigma is just rough estimate, so this
       // simple algorithm is fine. Welford's would be more trouble than needed.
       val mean = values.sum / values.length
-      values.fold
       val variance = values.map(n => (n - mean) * (n - mean)).sum / values.length
       math.sqrt(variance)
     }
