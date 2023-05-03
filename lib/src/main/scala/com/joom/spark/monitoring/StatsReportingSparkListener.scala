@@ -242,7 +242,13 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String) extends 
   }
 
   private def send[Record](kind: String, record: Record)(implicit codec: JsonValueCodec[Record]): Unit = {
-    val json = writeToString(record)
+    val json = try {
+      writeToString(record)
+    } catch {
+      case e: Exception =>
+        log.warn("StatsReportingSparkListener: could not serialize to json " + record, e)
+        return
+    }
     sendQueue.onNext(KindAndPayload(kind, json))
   }
 
@@ -288,13 +294,15 @@ object StatsReportingSparkListener {
   private val AppNameKey = "spark.app.name"
   private val BaseUrl = "https://api.cloud.joom.ai/v1/sparkperformance/"
 
-  private def sigma(values: Seq[Double]) = {
-    if (values.isEmpty) 0
+  def sigma(values: Seq[Double]) = {
+    if (values.length < 2)
+      0
     else {
+      // The number of stages is low, and sigma is just rough estimate, so this
+      // simple algorithm is fine. Welford's would be more trouble than needed.
       val mean = values.sum / values.length
-      val mos = values.fold(0.0)((r, n) => r + n * n) / values.length
-      val som = mean * mean
-      val variance = mos - som
+      values.fold
+      val variance = values.map(n => (n - mean) * (n - mean)).sum / values.length
       math.sqrt(variance)
     }
   }

@@ -1,5 +1,6 @@
 package com.joom.spark
 
+import com.joom.spark.monitoring.StatsReportingSparkListener
 import org.apache.spark.sql.SparkSession
 import org.junit.runner.RunWith
 import org.scalatest.{BeforeAndAfterAll, FlatSpec, Matchers}
@@ -25,5 +26,14 @@ class StatsListenerSpec  extends FlatSpec with Matchers with BeforeAndAfterAll {
     import spark.implicits._
 
     Seq(1, 2, 3).toDF().show()
+  }
+
+  "sigma" should "work" in {
+    import StatsReportingSparkListener.sigma
+
+    sigma(Seq.empty[Double]) should be(0.0)
+    sigma(Seq(7)) should be(0.0)
+    // Mean is 2, Variance is (1 + 0 + 1)/3 = 0.666, SD = 0.81
+    StatsReportingSparkListener.sigma(Seq(1, 2, 3)) should be(0.81 +- 0.1)
   }
 }
