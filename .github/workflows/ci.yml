@@ -41,7 +41,7 @@ jobs:
         run: |
           ./gradlew publishMavenPublicationToSonatypeRepository \
             -Pscala.version=${{ matrix.scala }} \
-	    -Pspark.version=${{ matrix.spark}
+            -Pspark.version=${{ matrix.spark}} \
             -Ppublication.repository.maven.name=Sonatype \
             -Ppublication.repository.maven.url=https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/ \
             -Ppublication.repository.maven.username=${{ secrets.SONATYPE_USERNAME }} \
