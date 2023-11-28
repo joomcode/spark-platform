@@ -15,6 +15,7 @@ jobs:
     strategy:
       matrix:
         scala: [ '2.12.15', '2.13.8' ]
+	spark: [ '3.2.4', '3.3.3', '3.4.1' ]
 
     steps:
       - name: Checkout
@@ -33,13 +34,14 @@ jobs:
       - name: Build and Test
         env:
           JOOM_CLOUD_TOKEN: ${{ secrets.JOOM_CLOUD_TOKEN }}
-        run: ./gradlew build -Pscala.version=${{ matrix.scala }} -i
+        run: ./gradlew build -Pscala.version=${{ matrix.scala }} -Pspark.version=${{ matrix.spark }} -i
 
       - name: Upload Artifacts
         if: contains(github.ref, '/tags/v')
         run: |
           ./gradlew publishMavenPublicationToSonatypeRepository \
             -Pscala.version=${{ matrix.scala }} \
+	    -Pspark.version=${{ matrix.spark}
             -Ppublication.repository.maven.name=Sonatype \
             -Ppublication.repository.maven.url=https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/ \
             -Ppublication.repository.maven.username=${{ secrets.SONATYPE_USERNAME }} \

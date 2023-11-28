@@ -8,16 +8,17 @@ plugins {
 final def scalaVersion = getScalaVersion()
 final def scalaLibraryVersion = getScalaLibraryVersion()
 
-final def sparkVersion = '3.2.2'
+final def sparkVersion = getSparkVersion()
+final def sparkLibraryVersion = getSparkLibraryVersion()
 
 dependencies {
     // We use Spark in API, so clients will need it when compiling
     // In most cases, the actual Spark code should be provided by the
     // execution envrionment, so compileOnlyApi is more technically correct than api
     // although the generated POM is the same regardless
-    compileOnlyApi "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
-    compileOnlyApi "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
-    compileOnlyApi "org.apache.spark:spark-catalyst_$scalaVersion:$sparkVersion"
+    compileOnlyApi "org.apache.spark:spark-core_$scalaVersion:$sparkLibraryVersion"
+    compileOnlyApi "org.apache.spark:spark-sql_$scalaVersion:$sparkLibraryVersion"
+    compileOnlyApi "org.apache.spark:spark-catalyst_$scalaVersion:$sparkLibraryVersion"
 
     compileOnly "org.scala-lang:scala-library:$scalaLibraryVersion"
 
@@ -28,8 +29,8 @@ dependencies {
     implementation "com.github.plokhotnyuk.jsoniter-scala:jsoniter-scala-macros_$scalaVersion:2.13.5"
     implementation "io.reactivex.rxjava3:rxjava:3.1.5"
 
-    testImplementation "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
-    testImplementation "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
+    testImplementation "org.apache.spark:spark-core_$scalaVersion:$sparkLibraryVersion"
+    testImplementation "org.apache.spark:spark-sql_$scalaVersion:$sparkLibraryVersion"
     testImplementation "org.scalatest:scalatest_$scalaVersion:3.0.8"
     testImplementation "junit:junit:4.13.2"
 }
@@ -64,7 +65,7 @@ publishing {
     publications {
         maven(MavenPublication) {
             groupId = 'com.joom.spark'
-            artifactId = "spark-platform_$scalaVersion"
+            artifactId = "spark-platform_${sparkVersion}_$scalaVersion"
             version = '0.3.8'
 
             from components.java
@@ -179,5 +180,26 @@ String getScalaVersion() {
             return "${parts[0]}.${parts[1]}"
         default:
             throw new IllegalArgumentException("Unsupported scala version $scalaVersion")
+    }
+}
+
+String getSparkLibraryVersion() {
+    def scalaVersion = getProperty('spark.version').toString()
+    def parts = scalaVersion.split('\\.')
+    if (parts.length >= 3) {
+        return scalaVersion
+    } else {
+        return (parts + '+').join('.')
+    }
+}
+
+String getSparkVersion() {
+    def scalaVersion = getProperty('spark.version').toString()
+    def parts = scalaVersion.split('\\.')
+    switch (parts[0]) {
+        case '3':
+            return "${parts[0]}.${parts[1]}"
+        default:
+            throw new IllegalArgumentException("Unsupported Spark version $scalaVersion")
     }
 }
