@@ -1,9 +1,9 @@
 package com.joom
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset}
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoders}
+import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.MillisToTs
-import org.apache.spark.sql.functions.{coalesce, col, hash, lit, struct, concat}
+import org.apache.spark.sql.functions.{coalesce, col, concat, hash, lit, struct}
 import org.apache.spark.sql.types.{DataType, StructType}
 
 import java.io.IOException
@@ -36,7 +36,7 @@ package object spark {
         }
         val sortColumns = sortColumnNames.flatMap { resolveColumn(_) }
         val comparisonColumns = comparisonColumnNames.flatMap { resolveColumn(_) }
-        val e = RowEncoder(df.schema)
+        val e = internal.rowEncoder(df.schema)
         new DataFrame(sparkSession, DeduplicateWithinPartitions(sortColumns, comparisonColumns, df.queryExecution.analyzed), e)
       }
     }
@@ -44,7 +44,7 @@ package object spark {
     implicit class ExplicitRepartitionWrapper(df: DataFrame) {
       def explicitRepartition(numPartitions: Int, partitionExpression: Column): DataFrame = {
         val sparkSession = df.sparkSession
-        val e = RowEncoder(df.schema)
+        val e = internal.rowEncoder(df.schema)
         new DataFrame(sparkSession,
           ExplicitRepartition(partitionExpression.expr, df.queryExecution.analyzed, numPartitions), e)
       }

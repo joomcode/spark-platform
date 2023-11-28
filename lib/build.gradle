@@ -10,6 +10,7 @@ final def scalaLibraryVersion = getScalaLibraryVersion()
 
 final def sparkVersion = getSparkVersion()
 final def sparkLibraryVersion = getSparkLibraryVersion()
+final def sparkVersionComponents = getSparkVersionComponents()
 
 dependencies {
     // We use Spark in API, so clients will need it when compiling
@@ -37,6 +38,19 @@ dependencies {
 
 repositories {
     mavenCentral()
+}
+
+sourceSets {
+    main {
+        scala {
+            srcDir 'src/main/scala'
+            if (sparkVersionComponents[0] == 3 && sparkVersionComponents[1] <= 4) {
+                srcDir('src/compatibility_3.4/scala')
+            } else {
+                srcDir('src/compatibility_current/scala')
+            }
+        }
+    }
 }
 
 java {
@@ -202,4 +216,10 @@ String getSparkVersion() {
         default:
             throw new IllegalArgumentException("Unsupported Spark version $scalaVersion")
     }
+}
+
+Integer[] getSparkVersionComponents() {
+    def scalaVersion = getProperty('spark.version').toString()
+    def parts = scalaVersion.split('\\.')
+    return parts.collect { it.toInteger() }
 }
