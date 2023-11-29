@@ -37,7 +37,7 @@ jobs:
         run: ./gradlew build -Pscala.version=${{ matrix.scala }} -Pspark.version=${{ matrix.spark }} -i
 
       - name: Upload Artifacts
-        if: contains(github.ref, '/tags/v')
+        if: contains(github.ref, '/tags/v') && matrix.spark == '3.5.0'
         run: |
           ./gradlew publishMavenPublicationToSonatypeRepository \
             -Pscala.version=${{ matrix.scala }} \
