@@ -4,14 +4,14 @@ import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoders}
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.MillisToTs
 import org.apache.spark.sql.functions.{coalesce, col, concat, hash, lit, struct}
-import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.{DataType, StructType, TimestampType}
 
 import java.io.IOException
 
 package object spark {
 
   /** Convert long millisecond-since-epoch value into Timestamp type */
-  def millis_to_ts(c: Column) = new Column(MillisToTs(c.expr))
+  def millis_to_ts(c: Column): Column = (c / 1000).cast(TimestampType)
 
   object implicits {
 
