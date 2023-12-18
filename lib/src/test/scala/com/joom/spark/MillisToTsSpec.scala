@@ -44,4 +44,17 @@ class MillisToTsSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
     df2.count() shouldBe 0
   }
+
+  "millis_to_ts" should "preserve millis" in {
+    import spark.implicits._
+    TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+
+    val df = Seq(1575891193535L)
+      .toDF("millis")
+      .withColumn("ts", millis_to_ts($"millis"))
+      .withColumn("tss", date_format($"ts", "yyyy-MM-dd HH:mm:ss.SSS"))
+
+    val row = df.collect()(0)
+    row.getString(2) shouldBe "2019-12-09 11:33:13.535"
+  }
 }
