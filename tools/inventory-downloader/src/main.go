@@ -76,6 +76,7 @@ func processFile(cfg aws.Config, ctx context.Context, objectKey string, fileUrl 
 var bucketName = flag.String("bucket", "joom-analytics-landing", "Target bucket to save files")
 var targetPrefix = flag.String("prefix", "storage-advisor/inventory", "Prefix to save files")
 var brokers = flag.String("brokers", "localhost:29092", "kafka brokers")
+var region = flag.String("region", "eu-central-1", "kafka brokers")
 var groupId = flag.String("group", "inventory-downloader-gburg-1", "kafka listener group")
 var topic = flag.String("topic", "", "kafka listener group")
 
@@ -138,7 +139,8 @@ func main() {
 
 	ctx := context.TODO()
 	cfg, err := config.LoadDefaultConfig(ctx)
-	cfg.Region = "eu-central-1"
+	cfg.Region = *region
+
 	if err != nil {
 		log.Error().
 			Err(err).
