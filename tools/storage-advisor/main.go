@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithy "github.com/aws/smithy-go"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"sort"
@@ -144,7 +146,7 @@ func checkInventory(buckets []Bucket, client *s3.Client) {
 				inventory = "No inventory configuration"
 			}
 		}
-		fmt.Printf("Bucket %s: %s\n", buckets[i].Name, inventory)
+		log.Printf("Bucket %s: %s\n", buckets[i].Name, inventory)
 		buckets[i].Inventory = inventory
 	}
 
@@ -155,9 +157,9 @@ func checkInventory(buckets []Bucket, client *s3.Client) {
 		}
 	}
 	if bucketsWithNoInventory > 0 {
-		fmt.Printf("Bucket Inventory: %d buckets have no inventory configuration\n", bucketsWithNoInventory)
+		log.Printf("Bucket Inventory: %d buckets have no inventory configuration\n", bucketsWithNoInventory)
 	} else {
-		fmt.Printf("Bucket Inventory: all good\n")
+		log.Printf("Bucket Inventory: all good\n")
 	}
 }
 
@@ -313,9 +315,9 @@ func checkAclSettings(buckets []Bucket, client *s3.Client) {
 			}
 		}
 		if suboptimalOwnershipBuckets > 0 {
-			fmt.Printf("Bucket ACLs: %d buckets have suboptimal settings\n", suboptimalOwnershipBuckets)
+			log.Printf("Bucket ACLs: %d buckets have suboptimal settings\n", suboptimalOwnershipBuckets)
 		} else {
-			fmt.Printf("Bucket ACLs: all good\n")
+			log.Printf("Bucket ACLs: all good\n")
 		}*/
 }
 
@@ -328,7 +330,7 @@ func summarizeIssues(results []Finding, checkName string) {
 		}
 	}
 	if issueCount > 0 {
-		fmt.Printf("%s: recommend changing %d buckets\n", checkName, issueCount)
+		log.Printf("%s: recommend changing %d buckets\n", checkName, issueCount)
 
 		// compute the count of each issue
 		issueCounts := make(map[string]int)
@@ -348,12 +350,12 @@ func summarizeIssues(results []Finding, checkName string) {
 		})
 		// print issuesWithCounts
 		for _, i := range issueWithCounts {
-			fmt.Printf("- %d buckets: %s\n", i.Count, i.Issue)
+			log.Printf("- %d buckets: %s\n", i.Count, i.Issue)
 		}
 	} else {
-		fmt.Printf("%s: all good\n", checkName)
+		log.Printf("%s: all good\n", checkName)
 	}
-	fmt.Printf("\n")
+	log.Printf("\n")
 }
 
 func runS3Checks(cfg aws.Config, err error) {
@@ -363,11 +365,11 @@ func runS3Checks(cfg aws.Config, err error) {
 	// Call the function to list S3 buckets.
 	bucketNames, err := listS3Buckets(client)
 	if err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 		return
 	}
 
-	fmt.Printf("Found %d buckets\n\n", len(bucketNames))
+	log.Printf("Found %d buckets\n\n", len(bucketNames))
 
 	buckets := make([]Bucket, 0, len(bucketNames))
 	for _, bucket := range bucketNames {
@@ -379,9 +381,9 @@ func runS3Checks(cfg aws.Config, err error) {
 	//buckets = buckets[0:10]
 
 	// Print the bucket names.
-	//	fmt.Println("S3 Buckets:")
+	//	log.Println("S3 Buckets:")
 	//	for _, name := range bucketNames {
-	//		fmt.Println(name)
+	//		log.Println(name)
 	//	}
 
 	// Create an S3 service client.
@@ -430,14 +432,14 @@ func runS3Checks(cfg aws.Config, err error) {
 	// Convert the array of buckets in 'buckets' to JSON string
 	bucketsJson, err := json.Marshal(buckets)
 	if err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 		return
 	}
 
-	fmt.Println("Sending to API")
+	log.Println("Sending to API")
 	err = sendToAPI(bucketsJson)
 	if err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 		return
 	}
 }
@@ -454,14 +456,6 @@ func readObjectContent(client *s3.Client, bucket string, key string) ([]byte, er
 	return io.ReadAll(r.Body)
 }
 
-type InventoryFile struct {
-	Key string
-}
-
-type InventoryManifest struct {
-	Files []InventoryFile `json:"files"`
-}
-
 func uploadInventoryForBucket(cfg aws.Config, bucket string, prefix string) {
 	client := s3.NewFromConfig(cfg)
 
@@ -475,12 +469,12 @@ func uploadInventoryForBucket(cfg aws.Config, bucket string, prefix string) {
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(context.Background())
 		if err != nil {
-			fmt.Println("Error:", err)
+			log.Println("Error:", err)
 			return
 		}
 		objects = append(objects, output.Contents...)
 	}
-	fmt.Printf("Found %d objects\n", len(objects))
+	log.Printf("Found %d objects\n", len(objects))
 
 	dates := make([]time.Time, 0, 20)
 	dateFormat := "2006-01-02T15-04Z"
@@ -491,7 +485,6 @@ func uploadInventoryForBucket(cfg aws.Config, bucket string, prefix string) {
 		next_slash := strings.Index(tail, "/")
 		if next_slash != -1 {
 			tail = tail[:next_slash]
-			fmt.Printf("Tail: %s\n", tail)
 			if strings.HasPrefix(tail, "20") {
 				// parse tail as ISO date
 				tailAsDate, err := time.Parse("2006-01-02T15-04Z", tail)
@@ -509,50 +502,95 @@ func uploadInventoryForBucket(cfg aws.Config, bucket string, prefix string) {
 		}
 	}
 
-	for _, d := range dates {
-		fmt.Printf("Date: %s\n", d.Format(time.DateOnly))
-	}
-
-	fmt.Printf("Max date: %s\n", maxDate.Format(time.DateTime))
-	content, err := readObjectContent(client, bucket, prefix+"/"+maxDate.Format(dateFormat)+"/manifest.json")
+	log.Printf("Max date: %s\n", maxDate.Format(time.DateTime))
+	partitionDate := maxDate.Format(dateFormat)
+	content, err := readObjectContent(client, bucket, prefix+"/"+partitionDate+"/manifest.json")
 	if err != nil {
-		fmt.Printf(err.Error())
-	} else {
-		fmt.Printf("Content: %s\n", content)
+		log.Printf(err.Error())
 	}
 
-	var manifest InventoryManifest
-	err = json.Unmarshal(content, &manifest)
+	var inputManifest InventoryManifest
+	err = json.Unmarshal(content, &inputManifest)
 	if err != nil {
-		fmt.Printf("Could not unmarsal manifest: %s\n", err.Error())
+		log.Fatalf("Could not unmarsal inputManifest: %s\n", err.Error())
 	}
-	fmt.Printf("Manifest has %d files\n", len(manifest.Files))
+	log.Printf("Manifest has %d files for bucket %s\n", len(inputManifest.Files), inputManifest.Bucket)
 
-	//for
+	presignClient := s3.NewPresignClient(client)
+	outputManifest := InventoryManifest{PartitionDate: partitionDate, Version: manifestVersion, Bucket: inputManifest.Bucket}
 
-	//presignClient := s3.NewPresignClient(client)
-	//presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
-	//	Bucket: &bucket,
-	//	Key:    &prefix + "/" + maxDate.Format(dateFormat) + "/manifest.json",
-	//}
+	for _, file := range inputManifest.Files {
+		presignedUrl := presignFile(presignClient, bucket, file.Key)
 
-	// Filter only
+		outputManifest.Files = append(outputManifest.Files, InventoryFile{
+			Url:         presignedUrl,
+			MD5checksum: file.MD5checksum,
+		})
+	}
+	//
+	marshal, err := json.Marshal([]InventoryManifest{outputManifest})
+	if err != nil {
+		panic(err)
+	}
 
+	r, err := http.NewRequest("POST", "https://api.cloud.joom.ai/v1/sparkperformance/s3Inventory", bytes.NewBuffer(marshal))
+	if err != nil {
+		panic(err)
+	}
+
+	r.Header.Add("Authorization", "Bearer "+*authJwtToken)
+	httpClient := &http.Client{}
+
+	res, err := httpClient.Do(r)
+	if err != nil {
+		panic(err)
+	}
+
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		body, err := ioutil.ReadAll(res.Body)
+		var message string
+		if err != nil {
+			message = "Returned non-200 status"
+		}
+
+		message = fmt.Sprintf("Returned non-200 status '%d': %s", res.StatusCode, string(body))
+		panic(message)
+	}
+}
+
+func presignFile(presignClient *s3.PresignClient, bucket string, fileKey string) string {
+	presignGetObject, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    aws.String(fileKey),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 24 * time.Hour
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	return presignGetObject.URL
 }
 func uploadInventory(cfg aws.Config) {
 	uploadInventoryForBucket(cfg, "joom-analytics-logs", "s3-inventory/joom-analytics-mart/default")
+	uploadInventoryForBucket(cfg, "joom-analytics-logs", "s3-inventory/joom-analytics-ads/default")
 }
 
+var authJwtToken = flag.String("jwt", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwcm9qZWN0LWlkIjoxLCJpYXQiOjE2OTg3NzA4MTMsImp0aSI6IjEifQ.gZw8-A1P6VH3amvVxpx7Crg-XEhXNfMdf225TxtcjJ0", "JWT authJwtToken from cloud")
+
 func main() {
+	flag.Parse()
+
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	// set region to eu-central-1
 	cfg.Region = "eu-central-1"
 	if err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 		return
 	}
 
-	runS3Checks(cfg, err)
+	//runS3Checks(cfg, err)
 
-	//uploadInventory(cfg)
+	uploadInventory(cfg)
 }
