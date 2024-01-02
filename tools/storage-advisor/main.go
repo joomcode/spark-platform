@@ -577,7 +577,7 @@ func uploadInventory(cfg aws.Config) {
 	uploadInventoryForBucket(cfg, "joom-analytics-logs", "s3-inventory/joom-analytics-ads/default")
 }
 
-var authJwtToken = flag.String("jwt", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwcm9qZWN0LWlkIjoxLCJpYXQiOjE2OTg3NzA4MTMsImp0aSI6IjEifQ.gZw8-A1P6VH3amvVxpx7Crg-XEhXNfMdf225TxtcjJ0", "JWT authJwtToken from cloud")
+var authJwtToken = flag.String("jwt", "", "JWT authJwtToken from cloud")
 
 func main() {
 	flag.Parse()
