@@ -10,9 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/rs/zerolog/log"
 	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -101,7 +101,6 @@ func processPayload(cfg aws.Config, ctx context.Context, inputManifest Inventory
 			inputManifest.PartitionDate,
 			"data",
 			filename)
-		log.Printf("(%d/%d) Downloading file to s3://%s/%s\n", i, len(inputManifest.Files), *bucketName, objectKey)
 		err = processFile(cfg, ctx, objectKey, file.Url)
 		if err != nil {
 			return fmt.Errorf("Error processing file: %w", err)
@@ -124,19 +123,26 @@ func processPayload(cfg aws.Config, ctx context.Context, inputManifest Inventory
 	if err != nil {
 		return fmt.Errorf("Error uploading file to S3: %w", err)
 	}
-	log.Printf("Finished processing manifest and uploaded s3://%s/%s\n", *bucketName, manifestKey)
+
+	log.
+		Info().
+		Str("targetPath", fmt.Sprintf("s3://%s/%s", *bucketName, manifestKey)).
+		Msg("Finished processing manifest")
 
 	return nil
 }
 
 func main() {
+
 	flag.Parse()
 
 	ctx := context.TODO()
 	cfg, err := config.LoadDefaultConfig(ctx)
 	cfg.Region = "eu-central-1"
 	if err != nil {
-		log.Println("Error:", err)
+		log.Error().
+			Err(err).
+			Msg("AWS config")
 		return
 	}
 
@@ -149,63 +155,90 @@ func main() {
 
 	consumer, err := kafka.NewConsumer(kafkaConfig)
 	if err != nil {
-		log.Printf("Error creating consumer: %v\n", err)
+		log.Error().
+			Err(err).
+			Msg("Kafka consumer create")
 		os.Exit(1)
 	}
 
 	topics := []string{*topic}
 	err = consumer.SubscribeTopics(topics, nil)
 	if err != nil {
-		log.Printf("Error subscribing to topics: %v\n", err)
+		log.
+			Error().
+			Err(err).
+			Msg("Subscribe to topics")
 		os.Exit(1)
 	}
 
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Printf("Listening to topics %s\n", topics)
+	log.Info().
+		Strs("topics", topics).
+		Msg("Listening to topics %s\n")
 
-	run := true
-	for run == true {
+loop:
+	for {
 		select {
 		case sig := <-sigchan:
-			log.Printf("Caught signal %v: terminating\n", sig)
-			run = false
+			log.Warn().
+				Str("signal", sig.String()).
+				Msg("Caught signal terminating")
+			break loop
 		case ev := <-consumer.Events():
 			switch e := ev.(type) {
 			case *kafka.Message:
 				var data Data
 				if err := json.Unmarshal(e.Value, &data); err != nil {
-					log.Printf("Error decoding JSON: %v\n", err)
+					log.
+						Error().
+						Err(err).
+						Msg("Error decoding JSON")
 				} else {
 					manifest := data.Payload
 					if manifest.Version != manifestVersion {
-						log.Printf("Skipping manifest of version %v with offset '%s' from project %v\n",
-							manifest.Version,
-							e.TopicPartition.Offset.String(),
-							data.ProjectId)
+						log.
+							Warn().
+							Int("manifestVersion", manifest.Version).
+							Str("offset", e.TopicPartition.Offset.String()).
+							Int("projectId", data.ProjectId).
+							Msg("Skipping manifest")
 					} else {
-						log.Printf("Received manifest with offset '%s' from project %v for %v\n",
-							e.TopicPartition.Offset.String(),
-							data.ProjectId,
-							manifest.PartitionDate)
+						log.
+							Info().
+							Str("offset", e.TopicPartition.Offset.String()).
+							Int("projectId", data.ProjectId).
+							Str("partitionDate", manifest.PartitionDate).
+							Msg("Received manifest")
 						err = processPayload(cfg, ctx, manifest, data.ProjectId)
 						if err != nil {
-							log.Printf("Error processing mainfest: %v\n", err)
+							log.
+								Error().
+								Str("offset", e.TopicPartition.Offset.String()).
+								Int("projectId", data.ProjectId).
+								Str("partitionDate", manifest.PartitionDate).
+								Err(err).
+								Msg("Error processing mainfest")
 						}
 					}
 				}
 			case kafka.Error:
 				log.Printf("Error: %v\n", e)
 				if e.Code() == kafka.ErrAllBrokersDown {
-					run = false
+					break loop
 				}
 			}
 		}
 	}
 
-	log.Println("Closing consumer")
+	log.
+		Warn().
+		Msg("Closing consumer")
 	if err := consumer.Close(); err != nil {
-		log.Printf("Error closing consumer: %v\n", err)
+		log.
+			Error().
+			Err(err).
+			Msg("Error closing consumer")
 	}
 }

@@ -13,7 +13,6 @@ RUN go build -o /inventory-downloader .
 
 FROM ubuntu AS bin
 
-COPY eu-central-1-bundle.crt /usr/local/share/ca-certificates/
 RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates
 
 COPY --from=build /inventory-downloader /inventory-downloader
