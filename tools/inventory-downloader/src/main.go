@@ -89,7 +89,7 @@ func processPayload(cfg aws.Config, ctx context.Context, inputManifest Inventory
 	var err error
 	outputManifest := InventoryManifest{PartitionDate: inputManifest.PartitionDate}
 
-	for i, file := range inputManifest.Files {
+	for _, file := range inputManifest.Files {
 		filename, err := extractFilenameFromURL(file.Url)
 		if err != nil {
 			return fmt.Errorf("Error getting filename form URL: %w", err)
@@ -157,20 +157,18 @@ func main() {
 
 	consumer, err := kafka.NewConsumer(kafkaConfig)
 	if err != nil {
-		log.Error().
+		log.Fatal().
 			Err(err).
 			Msg("Kafka consumer create")
-		os.Exit(1)
 	}
 
 	topics := []string{*topic}
 	err = consumer.SubscribeTopics(topics, nil)
 	if err != nil {
 		log.
-			Error().
+			Fatal().
 			Err(err).
 			Msg("Subscribe to topics")
-		os.Exit(1)
 	}
 
 	sigchan := make(chan os.Signal, 1)
