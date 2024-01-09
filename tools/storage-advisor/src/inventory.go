@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
 	"io/ioutil"
 	"log"
@@ -42,44 +41,28 @@ func presignFile(presignClient *s3.PresignClient, bucket string, fileKey string)
 	return presignGetObject.URL
 }
 
-func uploadInventoryForBucket(cfg aws.Config, jwtToken string, bucket string, prefix string) {
-	client := s3.NewFromConfig(cfg)
+func uploadInventoryForBucket(client *s3.Client, jwtToken string, bucket string, prefix string) {
 
-	// Enumerate objects in the bucket at the given prefix
-	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	}
-	paginator := s3.NewListObjectsV2Paginator(client, input)
-	var objects []types.Object
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(context.Background())
-		if err != nil {
-			log.Fatal("Error:", err)
-			return
-		}
-		objects = append(objects, output.Contents...)
-	}
-	log.Printf("Found %d objects\n", len(objects))
-
+	datePrefixies, err := listCommonPrefixes(client, bucket, prefix)
 	dates := make([]time.Time, 0, 20)
+
 	dateFormat := "2006-01-02T15-04Z"
-	for _, o := range objects {
-		key := *o.Key
-		// get key substring after prefix
-		tail := key[len(prefix)+1:]
-		next_slash := strings.Index(tail, "/")
-		if next_slash != -1 {
-			tail = tail[:next_slash]
-			if strings.HasPrefix(tail, "20") {
-				// parse tail as ISO date
-				tailAsDate, err := time.Parse("2006-01-02T15-04Z", tail)
-				if err == nil {
-					dates = append(dates, tailAsDate)
-				}
-			}
+	for _, datePrefix := range datePrefixies {
+		dateStr := strings.TrimPrefix(datePrefix, prefix)
+		dateStr = strings.TrimPrefix(dateStr, "/")
+		dateStr = strings.TrimSuffix(dateStr, "/")
+		tailAsDate, err := time.Parse("2006-01-02T15-04Z", dateStr)
+		if err == nil {
+			dates = append(dates, tailAsDate)
+		} else {
+			log.Println("Error: Skipping unexpected non-date prefix", datePrefix)
 		}
 	}
+	if len(dates) == 0 {
+		log.Println("Error: No dates found")
+		return
+	}
+
 	// Find max value in dates
 	maxDate := dates[0]
 	for _, d := range dates {
@@ -147,8 +130,7 @@ func uploadInventoryForBucket(cfg aws.Config, jwtToken string, bucket string, pr
 	log.Printf("Uploaded data for s3://%s/%s", bucket, prefix)
 }
 
-func findPrefixes(cfg aws.Config, bucket string, prefix string) ([]string, error) {
-	client := s3.NewFromConfig(cfg)
+func listCommonPrefixes(client *s3.Client, bucket string, prefix string) ([]string, error) {
 
 	if !strings.HasSuffix(prefix, "/") {
 		prefix = prefix + "/"
@@ -160,6 +142,8 @@ func findPrefixes(cfg aws.Config, bucket string, prefix string) ([]string, error
 		Delimiter: aws.String("/"),
 	}
 
+	log.Println("Listing prefix", bucket, prefix)
+
 	paginator := s3.NewListObjectsV2Paginator(client, params)
 	var commonPrefixes []string
 	for paginator.HasMorePages() {
@@ -169,7 +153,6 @@ func findPrefixes(cfg aws.Config, bucket string, prefix string) ([]string, error
 			return nil, err
 		}
 		for _, commonPrefix := range output.CommonPrefixes {
-			log.Println("Found prefix", *commonPrefix.Prefix)
 			commonPrefixes = append(commonPrefixes, *commonPrefix.Prefix)
 		}
 	}
