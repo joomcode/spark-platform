@@ -9,19 +9,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"log"
 	"os"
-	"strings"
 )
 
 type Config struct {
-	Region          string   `json:"region"`
-	InventoryBucket string   `json:"inventoryBucket"`
-	Prefixes        []string `json:"prefixes"`
+	Region          string `json:"region"`
+	InventoryBucket string `json:"inventoryBucket"`
+	Prefix          string `json:"prefix"`
 }
 
-var cliMode = flag.String("mode", "cli", "Use as a CLI tool")
+var mode = flag.String("mode", "cli", "Use as a CLI tool")
 var region = flag.String("region", "", "AWS region to use")
 
-var prefixes = flag.String("prefixes", "", "Comma separated list of inventory prefix")
+var inventoryPrefix = flag.String("prefix", "", "Root inventory prefix")
 var inventoryBucket = flag.String("inventory_bucket", "", "Bucket the inventory is stored in")
 var authJwtToken = flag.String("jwt", "", "JWT authJwtToken from cloud")
 
@@ -30,7 +29,7 @@ func main() {
 	flag.Parse()
 	rootCtx := context.TODO()
 	cfg, err := config.LoadDefaultConfig(rootCtx)
-	switch *cliMode {
+	switch *mode {
 	case "cli":
 		log.Println("Running in CLI mode")
 
@@ -40,20 +39,24 @@ func main() {
 			return
 		}
 
-		runS3Checks(cfg, err)
-		prefixList := strings.Split(*prefixes, ",")
+		//runS3Checks(cfg, err)
+		prefixList, err := findPrefixes(cfg, *inventoryBucket, *inventoryPrefix)
+
+		if err != nil {
+			log.Fatal("Failed to list prefix", err)
+		}
 
 		for _, prefix := range prefixList {
-			uploadInventoryForBucket(cfg, *authJwtToken, *inventoryBucket, prefix)
+			uploadInventoryForBucket(cfg, *authJwtToken, *inventoryBucket, prefix+"default")
 		}
 		return
-	case "AWS":
+	case "aws":
 		log.Println("Running in AWS lambda mode")
 
 		handler := func(ctx context.Context) (events.APIGatewayProxyResponse, error) {
 			jwt := os.Getenv("jwt")
 			conf := Config{
-				Prefixes:        strings.Split(os.Getenv("prefixes"), ","),
+				Prefix:          os.Getenv("prefix"),
 				Region:          os.Getenv("region"),
 				InventoryBucket: os.Getenv("inventoryBucket"),
 			}
@@ -66,8 +69,8 @@ func main() {
 				log.Fatal("inventoryBucket is empty")
 			}
 
-			if len(conf.Prefixes) == 0 {
-				log.Fatal("prefixes are empty")
+			if conf.Prefix == "" {
+				log.Fatal("prefix is empty")
 			}
 
 			if jwt == "" {
@@ -76,13 +79,24 @@ func main() {
 
 			log.Printf("Processing '%s'\n", conf)
 
-			for _, prefix := range conf.Prefixes {
+			prefixList, err := findPrefixes(cfg, *inventoryBucket, *inventoryPrefix)
+
+			if err != nil {
+				response := events.APIGatewayProxyResponse{
+					StatusCode: 500,
+					Body:       fmt.Sprintf("Failed to list prefix %s", err),
+				}
+
+				return response, err
+			}
+
+			for _, prefix := range prefixList {
 				uploadInventoryForBucket(cfg, jwt, conf.InventoryBucket, prefix)
 			}
 
 			response := events.APIGatewayProxyResponse{
 				StatusCode: 200,
-				Body:       fmt.Sprintf("Processed prefixes %s for bucket %s", conf.Prefixes, conf.InventoryBucket),
+				Body:       fmt.Sprintf("Processed prefixes %s for bucket %s", prefixList, conf.InventoryBucket),
 			}
 
 			return response, nil

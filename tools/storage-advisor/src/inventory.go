@@ -146,3 +146,33 @@ func uploadInventoryForBucket(cfg aws.Config, jwtToken string, bucket string, pr
 
 	log.Printf("Uploaded data for s3://%s/%s", bucket, prefix)
 }
+
+func findPrefixes(cfg aws.Config, bucket string, prefix string) ([]string, error) {
+	client := s3.NewFromConfig(cfg)
+
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
+
+	params := &s3.ListObjectsV2Input{
+		Bucket:    aws.String(bucket),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
+	}
+
+	paginator := s3.NewListObjectsV2Paginator(client, params)
+	var commonPrefixes []string
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(context.Background())
+		if err != nil {
+			log.Println("Error:", err)
+			return nil, err
+		}
+		for _, commonPrefix := range output.CommonPrefixes {
+			log.Println("Found prefix", *commonPrefix.Prefix)
+			commonPrefixes = append(commonPrefixes, *commonPrefix.Prefix)
+		}
+	}
+
+	return commonPrefixes, nil
+}

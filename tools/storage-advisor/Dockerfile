@@ -16,7 +16,7 @@ FROM ubuntu AS bin
 RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates
 
 COPY --from=build /storage-advisor /storage-advisor
-ENTRYPOINT ["/storage-advisor", "--cli_mode=false"]
+ENTRYPOINT ["/storage-advisor", "--mode=aws"]
 
 LABEL com.joom.retention.maxCount=5
 LABEL com.joom.retention.maxCountGroup=develop
