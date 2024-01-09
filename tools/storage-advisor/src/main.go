@@ -25,8 +25,6 @@ var prefixes = flag.String("prefixes", "", "Comma separated list of inventory pr
 var inventoryBucket = flag.String("inventory_bucket", "", "Bucket the inventory is stored in")
 var authJwtToken = flag.String("jwt", "", "JWT authJwtToken from cloud")
 
-//uploadInventoryForBucket(cfg, "joom-analytics-logs", "s3-inventory/joom-analytics-ads/default")
-
 func main() {
 	log.Println(os.Args)
 	flag.Parse()
