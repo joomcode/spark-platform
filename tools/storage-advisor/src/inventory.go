@@ -1,16 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -41,7 +37,7 @@ func presignFile(presignClient *s3.PresignClient, bucket string, fileKey string)
 	return presignGetObject.URL
 }
 
-func uploadInventoryForBucket(client *s3.Client, jwtToken string, bucket string, prefix string) {
+func uploadInventoryForBucket(client *s3.Client, api *Api, bucket string, prefix string) {
 
 	datePrefixies, err := listCommonPrefixes(client, bucket, prefix)
 	dates := make([]time.Time, 0, 20)
@@ -54,8 +50,6 @@ func uploadInventoryForBucket(client *s3.Client, jwtToken string, bucket string,
 		tailAsDate, err := time.Parse("2006-01-02T15-04Z", dateStr)
 		if err == nil {
 			dates = append(dates, tailAsDate)
-		} else {
-			log.Println("Error: Skipping unexpected non-date prefix", datePrefix)
 		}
 	}
 	if len(dates) == 0 {
@@ -102,29 +96,9 @@ func uploadInventoryForBucket(client *s3.Client, jwtToken string, bucket string,
 		panic(err)
 	}
 
-	r, err := http.NewRequest("POST", "https://api.cloud.joom.ai/v1/sparkperformance/s3Inventory", bytes.NewBuffer(marshal))
+	err = api.Post("storage-advisor/s3-inventory", marshal)
 	if err != nil {
-		panic(err)
-	}
-
-	r.Header.Add("Authorization", "Bearer "+jwtToken)
-	httpClient := &http.Client{}
-
-	res, err := httpClient.Do(r)
-	if err != nil {
-		panic(err)
-	}
-
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		body, err := ioutil.ReadAll(res.Body)
-		var message string
-		if err != nil {
-			message = "Returned non-200 status"
-		}
-
-		message = fmt.Sprintf("Returned non-200 status '%d': %s", res.StatusCode, string(body))
-		panic(message)
+		log.Printf("Error: could not upload inventory: %s\n", err.Error())
 	}
 
 	log.Printf("Uploaded data for s3://%s/%s", bucket, prefix)

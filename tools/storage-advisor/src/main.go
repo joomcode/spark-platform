@@ -8,8 +8,10 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"log"
 	"os"
+	"strings"
 )
 
 type Config struct {
@@ -23,34 +25,56 @@ var region = flag.String("region", "", "AWS region to use")
 
 var inventoryPrefix = flag.String("prefix", "", "Root inventory prefix")
 var inventoryBucket = flag.String("inventory_bucket", "", "Bucket the inventory is stored in")
-var authJwtToken = flag.String("jwt", "", "JWT authJwtToken from cloud")
+var apiToken = flag.String("api-token", "", "API token for Joom Cloud")
+
+var apiEndpoint = flag.String("api-endpoint", "https://api.cloud.joom.ai/v1", "API endpoint URL")
 
 func main() {
-	log.Println(os.Args)
 	flag.Parse()
 	rootCtx := context.TODO()
 	cfg, err := config.LoadDefaultConfig(rootCtx)
+	if err != nil {
+		fmt.Printf("Error: could not initialize AWS config: %v\n", err.Error())
+		return
+	}
+
+	api := NewApi(*apiEndpoint, apiToken)
+
 	switch *mode {
 	case "cli":
-		log.Println("Running in CLI mode")
+		if *region != "" {
+			cfg.Region = *region
+		}
 
-		cfg.Region = *region
+		stsOutput, err := sts.NewFromConfig(cfg).GetCallerIdentity(rootCtx, &sts.GetCallerIdentityInput{})
 		if err != nil {
-			log.Println("Error:", err)
+			fmt.Printf("Error: unable to get your AWS indentity\n\n")
+
+			fmt.Printf(
+				"\nPossibly, you did not login to AWS or your token has expired.\n" +
+					"Please try to login again. Then, verify your identity using\n\n" +
+					"    aws sts get-caller-identity\n\n" +
+					"If you are logged in, but still see this error, you might not\n" +
+					"have permissions to list S3 bucket. Double-check that IAM role\n" +
+					"associated with the role printed by the above command.\n\n")
+
 			return
 		}
-		//runS3Checks(cfg, err)
+		identity := *stsOutput.Arn
+		fmt.Printf("Info: your AWS identity is %s\n", identity)
 
-		validateInputs()
+		buckets := runS3Checks(cfg, api, identity)
+
 		client := s3.NewFromConfig(cfg)
 
-		prefixList, err := listCommonPrefixes(client, *inventoryBucket, *inventoryPrefix)
-		if err != nil {
-			log.Fatal("Failed to list prefix", err)
-		}
-
-		for _, prefix := range prefixList {
-			uploadInventoryForBucket(client, *authJwtToken, *inventoryBucket, prefix+"default")
+		for _, bucket := range buckets {
+			if bucket.UsableInventory != "" {
+				fmt.Printf("Trying to process inventory s3://%s\n", bucket.UsableInventory)
+				i := strings.Index(bucket.UsableInventory, "/")
+				inventoryBucket := bucket.UsableInventory[:i]
+				inventoryPrefix := bucket.UsableInventory[i+1:]
+				uploadInventoryForBucket(client, api, inventoryBucket, inventoryPrefix)
+			}
 		}
 		return
 
@@ -60,7 +84,7 @@ func main() {
 		*inventoryPrefix = os.Getenv("prefix")
 		*region = os.Getenv("region")
 		*inventoryBucket = os.Getenv("inventoryBucket")
-		*authJwtToken = os.Getenv("jwt")
+		*apiToken = os.Getenv("jwt")
 
 		validateInputs()
 
@@ -81,7 +105,7 @@ func main() {
 			}
 
 			for _, prefix := range prefixList {
-				uploadInventoryForBucket(client, *authJwtToken, *inventoryBucket, prefix+"default")
+				uploadInventoryForBucket(client, api, *inventoryBucket, prefix+"default")
 			}
 
 			response := events.APIGatewayProxyResponse{
@@ -110,7 +134,7 @@ func validateInputs() {
 		log.Fatal("prefix is empty")
 	}
 
-	if *authJwtToken == "" {
+	if *apiToken == "" {
 		log.Fatal("jwt token is empty")
 	}
 

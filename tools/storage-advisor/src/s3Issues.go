@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,11 +8,35 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
-	"log"
-	"net/http"
+	smithy "github.com/aws/smithy-go"
+	"github.com/fatih/color"
+	"github.com/manifoldco/promptui"
+	"os"
 	"sort"
 	"strings"
+	"text/template"
+)
+
+type IssueKind string
+
+const (
+	IssueKindVersioningNotSet                 = "VersioningNotSet"
+	IssueKindVersioningSuspended              = "VersioningSuspended"
+	IssueKindVersioningError                  = "VersioningError"
+	IssueKindOwnershipNotSet                  = "OwnershipNotSet"
+	IssueKindOwnershipLax                     = "OwnershipLax"
+	IssueKindOwnershipError                   = "OwnershipError"
+	IssueKindEncryptionKMSWithoutBucketKey    = "EncryptionKMSWithoutBucketKey"
+	IssueKindEncryptionAES256WithoutBucketKey = "EncryptionAES256WithoutBucketKey"
+	IssueKindEncryptionError                  = "EncryptionError"
+
+	IssueKindInventoryError  = "InventoryError"
+	IssueKindInventoryNotSet = "InventoryNotSet"
+
+	IssueKindInventoryNoSuitable = "InventoryNoSuitable"
+
+	IssueKindLoggingError  = "LoggingError"
+	IssueKindLoggingNotSet = "LoggingNotSet"
 )
 
 type IssueWithCount struct {
@@ -22,9 +45,27 @@ type IssueWithCount struct {
 }
 
 type Finding struct {
-	Summary string
-	Issue   string
+	Summary          string
+	Issue            string
+	IssueDetails     string
+	Recommentation   string
+	RecommentationTf string
 }
+
+func MakeErrorFinding(summary string, issue string, issueDetails string) Finding {
+	// Copy issue detail to recomemntations, so that user sees it.
+	return Finding{summary, issue, issueDetails, issueDetails, ""}
+}
+
+type FindingWithBucket struct {
+	Bucket string
+	Finding
+}
+
+var green = color.New(color.FgGreen).SprintfFunc()
+var yellow = color.New(color.FgYellow).Add(color.Bold).SprintfFunc()
+var red = color.New(color.FgRed).SprintfFunc()
+var bold = color.New(color.Bold).SprintfFunc()
 
 func listS3Buckets(client *s3.Client) ([]string, error) {
 
@@ -44,72 +85,110 @@ func listS3Buckets(client *s3.Client) ([]string, error) {
 }
 
 type Bucket struct {
-	Name            string `json:"name"`
-	Region          string `json:"region"`
-	Ownership       string `json:"ownership"`
-	OwnershipIssue  string `json:"ownershipIssue"`
-	Versioning      string `json:"versioning"`
-	VersioningIssue string `json:"versioningIssue"`
-	Inventory       string `json:"inventory"`
-	Logging         string `json:"logging"`
-	Encryption      string `json:"encryption"`
-	EncryptionIssue string `json:"encryptionIssue"`
+	Name                   string `json:"name" bson:"name"`
+	Region                 string `json:"region" bson:"region"`
+	Ownership              string `json:"ownership" bson:"ownership"`
+	OwnershipIssue         string `json:"ownershipIssue" bson:"ownershipIssue"`
+	OwnershipIssueDetails  string `json:"ownershipIssueDetails" bson:"ownershipIssueDetails"`
+	Versioning             string `json:"versioning" bson:"versioning"`
+	VersioningIssue        string `json:"versioningIssue" bson:"versioningIssue"`
+	VersioningIssueDetails string `json:"versioningIssueDetails" bson:"versioningIssueDetails"`
+	Inventory              string `json:"inventory" bson:"inventory"`
+	InventoryIssue         string `json:"inventoryIssue" bson:"inventoryIssue"`
+	InventoryIssueDetails  string `json:"inventoryIssueDetails" bson:"inventoryIssueDetails"`
+	Logging                string `json:"logging" bson:"logging"`
+	LoggingIssue           string `json:"loggingIssue" bson:"loggingIssue"`
+	LoggingIssueDetails    string `json:"loggingIssueDetails" bson:"loggingIssueDetails"`
+	Encryption             string `json:"encryption" bson:"encryption"`
+	EncryptionIssue        string `json:"encryptionIssue" bson:"encryptionIssue"`
+	EncryptionIssueDetails string `json:"encryptionIssueDetails" bson:"encryptionIssueDetails"`
+
+	UsableInventory string `json:"usableInventory" bson:"usableInventory"`
 }
 
-// Given bucketname, returns AWS ownership rule. Ideally,
-func getOwnership(client *s3.Client, bucket string) Finding {
+func getAclSettingsForBucket(client *s3.Client, bucket string) Finding {
+	const R = "Set bucket ownership to 'Bucket owner enforced'" // ('Permissions' -> 'Object Ownership' in AWS S3 Console)
+	const RT = `
+resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
+  bucket = {{ .Bucket }}
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+`
 	r, err := client.GetBucketOwnershipControls(context.TODO(), &s3.GetBucketOwnershipControlsInput{Bucket: &bucket})
 	if err != nil {
 		var ae smithy.APIError
 		if errors.As(err, &ae) {
 			if ae.ErrorCode() == "OwnershipControlsNotFoundError" {
-				return Finding{"Not set", "No bucket ownership control settings"}
+				return Finding{"Not set", IssueKindOwnershipNotSet, "",
+					R, RT}
 			} else {
-				return Finding{"Error", "Error: " + ae.ErrorCode()}
+				return MakeErrorFinding("Error", IssueKindOwnershipError, ae.Error())
 			}
 		} else {
-			return Finding{"Error", "Error: " + err.Error()}
+			return MakeErrorFinding("Error", IssueKindOwnershipError, err.Error())
 		}
 	} else {
 		if len(r.OwnershipControls.Rules) == 0 {
-			return Finding{"Not set", "No bucket ownership control settings"}
+			return Finding{"Not set", IssueKindOwnershipNotSet, "",
+				R, RT}
 		}
 		if len(r.OwnershipControls.Rules) > 1 {
-			return Finding{"Multiple", "Unexpected multiple ownership rules"}
+			return MakeErrorFinding("Multiple", IssueKindOwnershipError, "Unexpected multiple ownership rules")
 		}
 		ownership := r.OwnershipControls.Rules[0].ObjectOwnership
-		issue := ""
 		if ownership != types.ObjectOwnershipBucketOwnerEnforced {
-			issue = "Bucket ownership not enforced"
+			return Finding{string(ownership), IssueKindOwnershipLax, "",
+				R, RT}
 		}
-		return Finding{string(ownership), issue}
+		return Finding{string(ownership), "", "", "", ""}
 	}
 }
 
-// This function makes a HTTP POSt request with the given payload. The result is
-// then checked. If HTTP status is not 2xx we return error.
-func sendToAPI(payload []byte) error {
-	requestURL := "http://localhost:3027/api/storage-advisor/buckets"
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewBuffer(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Project-Id", "default")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-	return nil
-}
-
-func checkInventory(buckets []Bucket, client *s3.Client) {
+func checkAclSettings(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+	results := make([]Finding, 0, len(buckets))
 	for i := range buckets {
-		var inventory string
+		f := getAclSettingsForBucket(client, buckets[i].Name)
+		results = append(results, f)
+		buckets[i].Ownership = f.Summary
+		buckets[i].OwnershipIssue = f.Issue
+		buckets[i].OwnershipIssueDetails = f.IssueDetails
+		if f.Issue != "" {
+			*issues = append(*issues, FindingWithBucket{buckets[i].Name, f})
+		}
+	}
+
+	summarizeIssues(results, "Bucket ACLs")
+}
+
+func checkInventory(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+	R := "Enable object inventory"
+	RT := `
+resource "aws_s3_bucket_inventory" "{{ .Bucket }}" {
+  bucket = {{ .Bucket }}
+  name   = "ParquetDaily"
+
+  included_object_versions = "All"
+  optional_fields = ["Size", "LastModifiedDate", "StorageClass", "IntelligentTieringAccessTier"]
+
+  schedule {
+    frequency = "Daily"
+  }
+
+  destination {
+    bucket {
+      format     = "Parquet"
+      bucket_arn = "arn:aws:s3:::{{ .LogBucket }}"
+      // Note that for inventory, S3 will add bucket name to the prefix itself.
+      prefix     = "{{ .LogPrefix }}/inventory/"
+    }
+  }
+}
+`
+	results := make([]Finding, 0, len(buckets))
+	for i := range buckets {
+		var finding Finding
 
 		r, err := client.ListBucketInventoryConfigurations(context.TODO(), &s3.ListBucketInventoryConfigurationsInput{
 			Bucket: &buckets[i].Name,
@@ -118,44 +197,49 @@ func checkInventory(buckets []Bucket, client *s3.Client) {
 			var ae smithy.APIError
 			if errors.As(err, &ae) {
 				if ae.ErrorCode() == "InventoryConfigurationNotFoundError" {
-					inventory = "No inventory configuration"
+					finding = Finding{"Not set", IssueKindInventoryNotSet, "",
+						R, RT}
 				} else {
-
-					log.Printf("code: %s, message: %s, fault: %s", ae.ErrorCode(), ae.ErrorMessage(), ae.ErrorFault().String())
-					inventory = ae.ErrorCode()
+					finding = MakeErrorFinding("Error", IssueKindInventoryError, ae.Error())
 				}
 			} else {
-				log.Printf("Error: %f")
-				inventory = err.Error()
+				finding = MakeErrorFinding("Error", IssueKindInventoryError, err.Error())
 			}
 		} else {
-			inventory = ""
+			issuesPerConfiguration := make(map[string][]string, 0)
 			for _, c := range r.InventoryConfigurationList {
-				location, _ := checkInventoryConfiguration(c)
+				location, issues := checkInventoryConfiguration(c)
 				if location != "" {
-					inventory = location
+					if location[len(location)-1] == '/' {
+						location = location[0 : len(location)-1]
+					}
+					location = location + "/" + buckets[i].Name + "/" + *c.Id
+					fmt.Printf("%s: usable inventory at %s\n", buckets[i].Name, location)
+					buckets[i].UsableInventory = location
 					break
 				}
+				issuesPerConfiguration[*c.Id] = issues
 			}
-			if inventory == "" {
-				inventory = "No inventory configuration"
+			if buckets[i].UsableInventory == "" {
+				details := ""
+				for id, issues := range issuesPerConfiguration {
+					details = details + fmt.Sprintf("%s: %s ", id, strings.Join(issues, ", "))
+				}
+
+				finding = Finding{"No suitable inventory", IssueKindInventoryNoSuitable, details,
+					R, RT}
 			}
 		}
-		log.Printf("Bucket %s: %s\n", buckets[i].Name, inventory)
-		buckets[i].Inventory = inventory
+		results = append(results, finding)
+		buckets[i].Inventory = finding.Summary
+		buckets[i].InventoryIssue = finding.Issue
+		buckets[i].InventoryIssueDetails = finding.IssueDetails
+		if finding.Issue != "" {
+			*issues = append(*issues, FindingWithBucket{buckets[i].Name, finding})
+		}
 	}
 
-	bucketsWithNoInventory := 0
-	for i := range buckets {
-		if buckets[i].Inventory == "No inventory configuration" {
-			bucketsWithNoInventory++
-		}
-	}
-	if bucketsWithNoInventory > 0 {
-		log.Printf("Bucket Inventory: %d buckets have no inventory configuration\n", bucketsWithNoInventory)
-	} else {
-		log.Printf("Bucket Inventory: all good\n")
-	}
+	summarizeIssues(results, "Bucket Inventory")
 }
 
 // Check if inventory configuration is OK
@@ -217,10 +301,23 @@ func checkInventoryConfiguration(c types.InventoryConfiguration) (string, []stri
 		return "", issues
 	}
 
-	return *c.Destination.S3BucketDestination.Bucket + "/" + *c.Destination.S3BucketDestination.Prefix, []string{}
+	bucket := *c.Destination.S3BucketDestination.Bucket
+	i := strings.LastIndex(bucket, ":")
+	bucket = bucket[i+1:]
+
+	return bucket + "/" + *c.Destination.S3BucketDestination.Prefix, []string{}
 }
 
-func checkVersioning(buckets []Bucket, client *s3.Client) {
+func checkVersioning(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+	const R = "Enable versioning"
+	const RT = `
+resource "aws_s3_bucket_versioning" "{{ .Bucket }}" {
+  bucket = {{ .Bucket }}
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+`
 	results := make([]Finding, 0, len(buckets))
 	for i := range buckets {
 		var finding Finding
@@ -228,27 +325,53 @@ func checkVersioning(buckets []Bucket, client *s3.Client) {
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
-			finding = Finding{"Error", err.Error()}
+			finding = MakeErrorFinding("Error", IssueKindVersioningError, err.Error())
 		} else {
 			status := string(r.Status)
 			if status == "" {
 				status = "Not set"
 			}
 			issue := ""
-			if r.Status != types.BucketVersioningStatusEnabled {
-				issue = "Versioning not enabled"
+			if r.Status == types.BucketVersioningStatusEnabled {
+				// All good
+			} else if r.Status == types.BucketVersioningStatusSuspended {
+				issue = IssueKindVersioningSuspended
+			} else {
+				issue = IssueKindVersioningNotSet
 			}
-			finding = Finding{status, issue}
+			finding = Finding{status, issue, "",
+				R, RT}
 		}
 		results = append(results, finding)
 		buckets[i].Versioning = finding.Summary
 		buckets[i].VersioningIssue = finding.Issue
+		buckets[i].VersioningIssueDetails = finding.IssueDetails
+		if finding.Issue != "" {
+			*issues = append(*issues, FindingWithBucket{buckets[i].Name, finding})
+		}
 	}
 
 	summarizeIssues(results, "Bucket Versioning")
 }
 
-func checkEncryption(buckets []Bucket, client *s3.Client) {
+func checkEncryption(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+	R := "Enable Bucket Key" // (see 'Properties' -> 'Default Encryption' in the AWS S3 Console)
+	RT := `
+resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .Bucket }}" {
+  bucket = {{ .Bucket }}
+
+  rule {
+    bucket_key_enabled = true
+  }
+}
+`
+	RTKMS := `
+// WARNING: cannot generate safe proposed terraform change.
+// This bucket already configures KMS encryption and adding additional
+// configuration here can conflict with that configuration. Please find
+// the original location where you configure KMS encryption and add
+// enable bucket key.
+`
 	results := make([]Finding, 0, len(buckets))
 
 	for i := range buckets {
@@ -258,62 +381,91 @@ func checkEncryption(buckets []Bucket, client *s3.Client) {
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
-			finding = Finding{"Error", err.Error()}
+			finding = MakeErrorFinding("Error", IssueKindEncryptionError, err.Error())
 		} else {
 			if len(r.ServerSideEncryptionConfiguration.Rules) == 0 {
-				finding = Finding{"Not set", "No bucket encryption settings"}
+				// This should not ever happen, really, as S3 applies default encryption in
+				// all cases.
+				finding = MakeErrorFinding("Error", IssueKindEncryptionError,
+					"We've found a bucket with no encryption at all. This is not supposed to happen, ever")
 			} else if len(r.ServerSideEncryptionConfiguration.Rules) > 1 {
-				finding = Finding{"Multiple", "Unexpected multiple encryption rules"}
+				finding = MakeErrorFinding("Error", IssueKindEncryptionError,
+					"We've found a bucket with multiple encryption rules. This is not supposed to happen, ever")
 			} else {
 				rule := r.ServerSideEncryptionConfiguration.Rules[0]
 				if rule.ApplyServerSideEncryptionByDefault == nil {
-					finding = Finding{"Not set", "No bucket encryption settings"}
+					finding = MakeErrorFinding("Error", IssueKindEncryptionError,
+						"We've found a bucket with no encryption rules. This is not supposed to happen ever")
 				} else {
 					issue := ""
-					if rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm != types.ServerSideEncryptionAes256 {
-						if rule.BucketKeyEnabled == nil || !*rule.BucketKeyEnabled {
-							issue = "KMS encryption without bucket key"
+					rt := ""
+					if rule.BucketKeyEnabled == nil || !*rule.BucketKeyEnabled {
+						if rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm == types.ServerSideEncryptionAes256 {
+							issue = IssueKindEncryptionAES256WithoutBucketKey
+							rt = RT
+						} else {
+							issue = IssueKindEncryptionKMSWithoutBucketKey
+							rt = RTKMS
 						}
 					}
 					finding = Finding{
 						string(rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm),
-						issue}
+						issue, "", R, rt}
 				}
 			}
-
 		}
 		results = append(results, finding)
 		buckets[i].Encryption = finding.Summary
 		buckets[i].EncryptionIssue = finding.Issue
+		buckets[i].EncryptionIssueDetails = finding.IssueDetails
+		if finding.Issue != "" {
+			*issues = append(*issues, FindingWithBucket{buckets[i].Name, finding})
+		}
 	}
 
 	summarizeIssues(results, "Bucket Encryption")
 }
 
-func checkAclSettings(buckets []Bucket, client *s3.Client) {
+func checkLogging(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+	R := "Enable S3 logging" // (see 'Properties' -> 'Server access logging' in the AWS S3 Console)
+	RT := `
+resource "aws_s3_bucket_logging" "{{ .Bucket }}" {
+  bucket = {{ .Bucket }}
+
+  target_bucket = "{{ .LogBucket }}"
+  // We need to explicitly add bucket name in the prefix.
+  target_prefix = "{{ .LogPrefix }}/logs/{{ .Bucket }}/"
+}
+`
 	results := make([]Finding, 0, len(buckets))
+
 	for i := range buckets {
-		f := getOwnership(client, buckets[i].Name)
-		results = append(results, f)
-		buckets[i].Ownership = f.Summary
-		buckets[i].OwnershipIssue = f.Issue
-	}
-
-	summarizeIssues(results, "Bucket ACLs")
-
-	/*
-		// Count the number of buckets whose Ownership is not BucketOwnerEnforced
-		suboptimalOwnershipBuckets := 0
-		for i := range buckets {
-			if buckets[i].Ownership != "BucketOwnerEnforced" {
-				suboptimalOwnershipBuckets++
+		var finding Finding
+		// Get bucket logging
+		r, err := client.GetBucketLogging(context.TODO(), &s3.GetBucketLoggingInput{
+			Bucket: &buckets[i].Name,
+		})
+		if err != nil {
+			finding = MakeErrorFinding("Error", IssueKindLoggingError, err.Error())
+		} else {
+			if r.LoggingEnabled == nil {
+				finding = Finding{"Not enabled", IssueKindLoggingNotSet, "",
+					R, RT}
+			} else {
+				path := fmt.Sprintf("%s/%s", *r.LoggingEnabled.TargetBucket, *r.LoggingEnabled.TargetPrefix)
+				finding = Finding{path, "", "", "", ""}
 			}
 		}
-		if suboptimalOwnershipBuckets > 0 {
-			log.Printf("Bucket ACLs: %d buckets have suboptimal settings\n", suboptimalOwnershipBuckets)
-		} else {
-			log.Printf("Bucket ACLs: all good\n")
-		}*/
+		results = append(results, finding)
+		buckets[i].Logging = finding.Summary
+		buckets[i].LoggingIssue = finding.Issue
+		buckets[i].LoggingIssueDetails = finding.IssueDetails
+		if finding.Issue != "" {
+			*issues = append(*issues, FindingWithBucket{buckets[i].Name, finding})
+		}
+	}
+
+	summarizeIssues(results, "Bucket Logging")
 }
 
 func summarizeIssues(results []Finding, checkName string) {
@@ -325,7 +477,8 @@ func summarizeIssues(results []Finding, checkName string) {
 		}
 	}
 	if issueCount > 0 {
-		log.Printf("%s: recommend changing %d buckets\n", checkName, issueCount)
+		ok := len(results) - issueCount
+		fmt.Printf("%s: %s, %s\n", bold(checkName), green("%d OK", ok), yellow("%d warning", issueCount))
 
 		// compute the count of each issue
 		issueCounts := make(map[string]int)
@@ -345,26 +498,31 @@ func summarizeIssues(results []Finding, checkName string) {
 		})
 		// print issuesWithCounts
 		for _, i := range issueWithCounts {
-			log.Printf("- %d buckets: %s\n", i.Count, i.Issue)
+			fmt.Printf("- %d buckets: %s\n", i.Count, i.Issue)
 		}
 	} else {
-		log.Printf("%s: all good\n", checkName)
+		fmt.Printf("%s: %s\n", bold(checkName), green("%d OK", len(results)))
 	}
-	log.Printf("\n")
+	fmt.Printf("\n")
 }
 
-func runS3Checks(cfg aws.Config, err error) {
-	// Create an S3 service client.
+func runS3Checks(cfg aws.Config, api *Api, identity string) []Bucket {
+	fmt.Printf(green("Running S3 checks\n\n"))
+
 	client := s3.NewFromConfig(cfg)
 
-	// Call the function to list S3 buckets.
 	bucketNames, err := listS3Buckets(client)
 	if err != nil {
-		log.Println("Error:", err)
-		return
+		var ae smithy.APIError
+		if errors.As(err, &ae) {
+			color.Red("Could not list buckets: %s: %s", ae.ErrorCode(), ae.ErrorMessage())
+		} else {
+			color.Red("Could not list buckets: %s", err.Error())
+		}
+		return []Bucket{}
 	}
 
-	log.Printf("Found %d buckets\n\n", len(bucketNames))
+	fmt.Printf("Found %d buckets\n\n", len(bucketNames))
 
 	buckets := make([]Bucket, 0, len(bucketNames))
 	for _, bucket := range bucketNames {
@@ -373,15 +531,7 @@ func runS3Checks(cfg aws.Config, err error) {
 			buckets = append(buckets, Bucket{Name: bucket})
 		}
 	}
-	//buckets = buckets[0:10]
-
-	// Print the bucket names.
-	//	log.Println("S3 Prefixies:")
-	//	for _, name := range bucketNames {
-	//		log.Println(name)
-	//	}
-
-	// Create an S3 service client.
+	buckets = buckets[0:10]
 
 	for i := range buckets {
 		// Get bucket region
@@ -389,52 +539,173 @@ func runS3Checks(cfg aws.Config, err error) {
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
-			buckets[i].Region = err.Error()
+			buckets[i].Region = "Error" //err.Error()
 		} else {
 			buckets[i].Region = string(r.LocationConstraint)
 		}
 	}
 
-	checkAclSettings(buckets, client)
+	issues := make([]FindingWithBucket, 0)
 
-	checkVersioning(buckets, client)
+	checkAclSettings(buckets, client, &issues)
 
-	checkEncryption(buckets, client)
+	checkVersioning(buckets, client, &issues)
 
-	/*
+	checkEncryption(buckets, client, &issues)
 
-		checkInventory(buckets, client)
+	checkLogging(buckets, client, &issues)
 
-		for i := range buckets {
-			// Get value of bucket's server access logging
-			r, err := client.GetBucketLogging(context.TODO(), &s3.GetBucketLoggingInput{
-				Bucket: &buckets[i].Name,
-			})
-			if err != nil {
-				buckets[i].Logging = err.Error()
-			} else {
-				if r.LoggingEnabled == nil {
-					buckets[i].Logging = "disabled"
-				} else {
-					buckets[i].Logging = fmt.Sprintf("%s/%s", *r.LoggingEnabled.TargetBucket, *r.LoggingEnabled.TargetPrefix)
-				}
-			}
-		}
+	checkInventory(buckets, client, &issues)
 
+	writeBasicIssues(issues, identity)
 
-		}*/
+	if api.IsConfigured() {
+		uploadBasicIssues(api, buckets)
+	}
 
-	// Convert the array of buckets in 'buckets' to JSON string
-	bucketsJson, err := json.Marshal(buckets)
+	return buckets
+}
+
+func writeBasicIssues(issues []FindingWithBucket, identity string) {
+	// Group issues by buckets
+	issuesByBucket := make(map[string][]FindingWithBucket)
+	for _, issue := range issues {
+		issuesByBucket[issue.Bucket] = append(issuesByBucket[issue.Bucket], issue)
+	}
+
+	f, err := os.Create("s3-recommendations.txt")
 	if err != nil {
-		log.Println("Error:", err)
+		fmt.Printf("Cannot write issues list: cannot open 's3-recommendations.txt': %s\n", err.Error())
+		return
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "\nS3 issue check was run as %s\n", identity)
+
+	if len(issues) == 0 {
+		fmt.Fprint(f, "\nThere are not issues. You rock!\n")
 		return
 	}
 
-	log.Println("Sending to API")
-	err = sendToAPI(bucketsJson)
+	fmt.Fprint(f, "\nPlease consider making the following changes:\n\n")
+
+	for bucket, issues := range issuesByBucket {
+		fmt.Fprintf(f, "%s:\n", bucket)
+		for _, issue := range issues {
+			fmt.Fprintf(f, "  - %s\n", issue.Recommentation)
+		}
+		fmt.Fprintf(f, "\n")
+	}
+	fmt.Println(green("Wrote recommentations to 's3-recommentations.txt'\n"))
+
+	fmt.Println("We can write recommendations in Terraform format, which might be easier to apply.")
+	fmt.Println("Note that we just write Terraform code, we'll never try to change anything in your AWS account.")
+
+	prompt := promptui.Select{
+		Label: "Proceed>",
+		Items: []string{"Yes, write Terraform recommendations", "No, skip Terraform recommendations"},
+	}
+
+	index, result, err := prompt.Run()
 	if err != nil {
-		log.Println("Error:", err)
+		fmt.Printf("Could not get the prompt: %s\n", err.Error())
+		return
+	}
+	if index == 1 {
+		return
+	}
+
+	fmt.Println("We'll need to know which bucket is good for S3 logs and inventory.")
+
+	validate := func(input string) error {
+		if input == "" {
+			return errors.New("Bucket name cannot be empty")
+		}
+		si := strings.Index(input, "/")
+		if si == -1 {
+			return errors.New("Please specify both bucket and prefix, separated by '/'")
+		}
+		if si == len(input)-1 {
+			return errors.New("Prefix is empty")
+		}
+		if si < 3 {
+			return errors.New("Bucket name is too short")
+		}
+		return nil
+	}
+	prompt2 := promptui.Prompt{
+		Label:    "Specify the bucket/prefix for logging and inventory",
+		Validate: validate,
+	}
+	result, _ = prompt2.Run()
+	si := strings.Index(result, "/")
+	logBucket := result[0:si]
+	logPrefix := result[si+1:]
+	if logPrefix[len(logPrefix)-1] == '/' {
+		logPrefix = logPrefix[0 : len(logPrefix)-1]
+	}
+
+	tf, err := os.Create("s3-recommendations.tf")
+	if err != nil {
+		fmt.Printf("Cannot write issues list: cannot open 's3-recommentations.tf': %s\n", err.Error())
+		return
+	}
+
+	header := `
+// These are recommended changes to you S3 setup.
+// Note that depending on how you manager your infrastructure, you might already have
+// conflicting changes in Terraform, or other configuration system. Please carefully
+// review the plan before applying.
+// These recommentations were created by Joom Storage Advisor
+// It was run as %s
+`
+
+	fmt.Fprintf(tf, header, identity)
+	defer tf.Close()
+
+	for bucket, issues := range issuesByBucket {
+
+		context := map[string]interface{}{
+			"Bucket":    bucket,
+			"LogBucket": logBucket,
+			"LogPrefix": logPrefix,
+		}
+
+		for _, issue := range issues {
+			issueHeader := `
+// Bucket: %s
+// Issue: %s %s
+// Recommentation: %s
+`
+			fmt.Fprintf(tf, issueHeader, bucket, issue.Issue, issue.IssueDetails, issue.Recommentation)
+			if issue.RecommentationTf != "" {
+				tmpl, err := template.New("tf").Parse(issue.RecommentationTf)
+				if err != nil {
+					fmt.Fprintf(tf, "// Internal error: %s\n", err.Error())
+				}
+				err = tmpl.Execute(tf, context)
+				if err != nil {
+					fmt.Fprintf(tf, "// Internal error: %s\n", err.Error())
+				}
+			} else {
+				fmt.Fprintf(tf, "// Sadly, we coulnd not generate Terraform recommendation\n\n")
+			}
+		}
+	}
+	fmt.Println(green("Wrote Terraform recommedations to 's3-recommentations.tf'\n"))
+}
+
+func uploadBasicIssues(api *Api, buckets []Bucket) {
+	bucketsJson, err := json.Marshal(buckets)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	fmt.Println("Sending to API")
+	err = api.Post("storage-advisor/buckets", bucketsJson)
+	if err != nil {
+		fmt.Println("Unable to send buckets list to the API:", err.Error())
 		return
 	}
 }
