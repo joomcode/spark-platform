@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
@@ -9,7 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"log"
+	"github.com/aws/smithy-go"
+	"github.com/fatih/color"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"os"
 	"strings"
 )
@@ -21,96 +25,102 @@ type Config struct {
 }
 
 var mode = flag.String("mode", "cli", "Use as a CLI tool")
-var region = flag.String("region", "", "AWS region to use")
 
-var inventoryPrefix = flag.String("prefix", "", "Root inventory prefix")
-var inventoryBucket = flag.String("inventory_bucket", "", "Bucket the inventory is stored in")
 var apiToken = flag.String("api-token", "", "API token for Joom Cloud")
 
 var apiEndpoint = flag.String("api-endpoint", "https://api.cloud.joom.ai/v1", "API endpoint URL")
 
 func main() {
 	flag.Parse()
-	rootCtx := context.TODO()
+	rootCtx := context.Background()
 	cfg, err := config.LoadDefaultConfig(rootCtx)
 	if err != nil {
-		fmt.Printf("Error: could not initialize AWS config: %v\n", err.Error())
+		fmt.Printf("Error: could not initialize AWS config: %v\n", err)
 		return
 	}
-
+	client := s3.NewFromConfig(cfg)
 	api := NewApi(*apiEndpoint, apiToken)
 
 	switch *mode {
 	case "cli":
-		if *region != "" {
-			cfg.Region = *region
+		// For CLI, use a simplified logger
+		output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: ""}
+		output.FormatTimestamp = func(i interface{}) string {
+			return ""
 		}
+		output.FormatLevel = func(i interface{}) string {
+			switch i.(string) {
+			case "err":
+				return "Error: "
+			case "warn":
+				return "Warning: "
+			default:
+				return ""
+			}
+		}
+		log.Logger = zerolog.New(output).Level(zerolog.InfoLevel)
 
 		stsOutput, err := sts.NewFromConfig(cfg).GetCallerIdentity(rootCtx, &sts.GetCallerIdentityInput{})
 		if err != nil {
-			fmt.Printf("Error: unable to get your AWS indentity\n\n")
-
-			fmt.Printf(
-				"\nPossibly, you did not login to AWS or your token has expired.\n" +
-					"Please try to login again. Then, verify your identity using\n\n" +
-					"    aws sts get-caller-identity\n\n" +
-					"If you are logged in, but still see this error, you might not\n" +
-					"have permissions to list S3 bucket. Double-check that IAM role\n" +
-					"associated with the role printed by the above command.\n\n")
+			fmt.Printf("Error: unable to get your AWS indentity\n\n" +
+				"Possibly, you did not login to AWS or your token has expired.\n" +
+				"Please try to login again. Then, verify your identity using\n\n" +
+				"    aws sts get-caller-identity\n\n" +
+				"If you are logged in, but still see this error, you might not\n" +
+				"have permissions to list S3 bucket. Double-check that IAM role\n" +
+				"associated with the role printed by the above command.\n\n")
 
 			return
 		}
 		identity := *stsOutput.Arn
 		fmt.Printf("Info: your AWS identity is %s\n", identity)
 
-		buckets := runS3Checks(cfg, api, identity)
+		buckets, issues, err := runS3Checks(rootCtx, client)
+		var ae smithy.APIError
+		if errors.As(err, &ae) {
+			color.Red("Could not list buckets: %s: %s", ae.ErrorCode(), ae.ErrorMessage())
+			return
+		} else {
+			color.Red("Could not list buckets: %s", err.Error())
+			return
+		}
 
-		client := s3.NewFromConfig(cfg)
+		writeBasicIssues(issues, identity)
 
-		for _, bucket := range buckets {
-			if bucket.UsableInventory != "" {
-				fmt.Printf("Trying to process inventory s3://%s\n", bucket.UsableInventory)
-				i := strings.Index(bucket.UsableInventory, "/")
-				inventoryBucket := bucket.UsableInventory[:i]
-				inventoryPrefix := bucket.UsableInventory[i+1:]
-				uploadInventoryForBucket(client, api, inventoryBucket, inventoryPrefix)
-			}
+		if api.IsConfigured() {
+			uploadBasicIssues(api, buckets)
+			count := uploadInventories(api, client, buckets)
+			fmt.Printf(green("Uploaded inventory for %d buckets\n", count))
 		}
 		return
 
 	case "aws":
-		log.Println("Running in AWS lambda mode")
-
-		*inventoryPrefix = os.Getenv("prefix")
-		*region = os.Getenv("region")
-		*inventoryBucket = os.Getenv("inventoryBucket")
-		*apiToken = os.Getenv("jwt")
-
-		validateInputs()
-
-		cfg.Region = *region
-
-		client := s3.NewFromConfig(cfg)
+		if apiToken == nil {
+			log.Fatal().Msg("api token is not provided; either provide it or run in CLI mode")
+			return
+		}
 
 		handler := func(ctx context.Context) (events.APIGatewayProxyResponse, error) {
-			prefixList, err := listCommonPrefixes(client, *inventoryBucket, *inventoryPrefix)
 
+			stsOutput, err := sts.NewFromConfig(cfg).GetCallerIdentity(rootCtx, &sts.GetCallerIdentityInput{})
 			if err != nil {
-				response := events.APIGatewayProxyResponse{
-					StatusCode: 500,
-					Body:       fmt.Sprintf("Failed to list prefix %s", err),
-				}
-
-				return response, err
+				log.Err(err).Msg("could not determine AWS identity, this usually means AWS auth is missing")
+			} else {
+				log.Info().Msgf("running with AWS identity %s", *stsOutput.Arn)
 			}
 
-			for _, prefix := range prefixList {
-				uploadInventoryForBucket(client, api, *inventoryBucket, prefix+"default")
+			buckets, _, err := runS3Checks(rootCtx, client)
+			if err != nil {
+				log.Fatal().Err(err).Msg("could not list buckets")
 			}
+
+			uploadBasicIssues(api, buckets)
+
+			count := uploadInventories(api, client, buckets)
 
 			response := events.APIGatewayProxyResponse{
 				StatusCode: 200,
-				Body:       fmt.Sprintf("Processed prefixes %s for bucket %s", prefixList, *inventoryBucket),
+				Body:       fmt.Sprintf("uploaded invetories for %d buckets", count),
 			}
 
 			return response, nil
@@ -121,22 +131,18 @@ func main() {
 
 }
 
-func validateInputs() {
-	if *region == "" {
-		log.Fatal("region is empty")
+func uploadInventories(api *JoomCloudAPI, client *s3.Client, buckets []Bucket) int {
+	count := 0
+	for _, bucket := range buckets {
+		if bucket.UsableInventory == "" {
+			continue
+		}
+		log.Info().Msgf("Processing inventory s3://%s", bucket.UsableInventory)
+		i := strings.Index(bucket.UsableInventory, "/")
+		inventoryBucket := bucket.UsableInventory[:i]
+		inventoryPrefix := bucket.UsableInventory[i+1:]
+		uploadInventoryForBucket(client, api, inventoryBucket, inventoryPrefix)
+		count = count + 1
 	}
-
-	if *inventoryBucket == "" {
-		log.Fatal("inventoryBucket is empty")
-	}
-
-	if *inventoryPrefix == "" {
-		log.Fatal("prefix is empty")
-	}
-
-	if *apiToken == "" {
-		log.Fatal("jwt token is empty")
-	}
-
-	log.Println("Processing", *inventoryPrefix, *inventoryBucket, *region)
+	return count
 }

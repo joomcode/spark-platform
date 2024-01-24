@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithy "github.com/aws/smithy-go"
@@ -48,11 +47,11 @@ type Finding struct {
 	Summary          string
 	Issue            string
 	IssueDetails     string
-	Recommentation   string
-	RecommentationTf string
+	Recommendation   string
+	RecommendationTF string
 }
 
-func MakeErrorFinding(summary string, issue string, issueDetails string) Finding {
+func makeErrorFinding(summary string, issue string, issueDetails string) Finding {
 	// Copy issue detail to recomemntations, so that user sees it.
 	return Finding{summary, issue, issueDetails, issueDetails, ""}
 }
@@ -106,7 +105,7 @@ type Bucket struct {
 	UsableInventory string `json:"usableInventory" bson:"usableInventory"`
 }
 
-func getAclSettingsForBucket(client *s3.Client, bucket string) Finding {
+func getACLSettingsForBucket(ctx context.Context, client *s3.Client, bucket string) Finding {
 	const R = "Set bucket ownership to 'Bucket owner enforced'" // ('Permissions' -> 'Object Ownership' in AWS S3 Console)
 	const RT = `
 resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
@@ -116,7 +115,7 @@ resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
   }
 }
 `
-	r, err := client.GetBucketOwnershipControls(context.TODO(), &s3.GetBucketOwnershipControlsInput{Bucket: &bucket})
+	r, err := client.GetBucketOwnershipControls(ctx, &s3.GetBucketOwnershipControlsInput{Bucket: &bucket})
 	if err != nil {
 		var ae smithy.APIError
 		if errors.As(err, &ae) {
@@ -124,10 +123,10 @@ resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
 				return Finding{"Not set", IssueKindOwnershipNotSet, "",
 					R, RT}
 			} else {
-				return MakeErrorFinding("Error", IssueKindOwnershipError, ae.Error())
+				return makeErrorFinding("Error", IssueKindOwnershipError, ae.Error())
 			}
 		} else {
-			return MakeErrorFinding("Error", IssueKindOwnershipError, err.Error())
+			return makeErrorFinding("Error", IssueKindOwnershipError, err.Error())
 		}
 	} else {
 		if len(r.OwnershipControls.Rules) == 0 {
@@ -135,7 +134,7 @@ resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
 				R, RT}
 		}
 		if len(r.OwnershipControls.Rules) > 1 {
-			return MakeErrorFinding("Multiple", IssueKindOwnershipError, "Unexpected multiple ownership rules")
+			return makeErrorFinding("Multiple", IssueKindOwnershipError, "Unexpected multiple ownership rules")
 		}
 		ownership := r.OwnershipControls.Rules[0].ObjectOwnership
 		if ownership != types.ObjectOwnershipBucketOwnerEnforced {
@@ -146,10 +145,10 @@ resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
 	}
 }
 
-func checkAclSettings(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+func checkACLSettings(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	results := make([]Finding, 0, len(buckets))
 	for i := range buckets {
-		f := getAclSettingsForBucket(client, buckets[i].Name)
+		f := getACLSettingsForBucket(ctx, client, buckets[i].Name)
 		results = append(results, f)
 		buckets[i].Ownership = f.Summary
 		buckets[i].OwnershipIssue = f.Issue
@@ -162,7 +161,7 @@ func checkAclSettings(buckets []Bucket, client *s3.Client, issues *[]FindingWith
 	summarizeIssues(results, "Bucket ACLs")
 }
 
-func checkInventory(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+func checkInventory(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	R := "Enable object inventory"
 	RT := `
 resource "aws_s3_bucket_inventory" "{{ .Bucket }}" {
@@ -190,7 +189,7 @@ resource "aws_s3_bucket_inventory" "{{ .Bucket }}" {
 	for i := range buckets {
 		var finding Finding
 
-		r, err := client.ListBucketInventoryConfigurations(context.TODO(), &s3.ListBucketInventoryConfigurationsInput{
+		r, err := client.ListBucketInventoryConfigurations(ctx, &s3.ListBucketInventoryConfigurationsInput{
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
@@ -200,13 +199,13 @@ resource "aws_s3_bucket_inventory" "{{ .Bucket }}" {
 					finding = Finding{"Not set", IssueKindInventoryNotSet, "",
 						R, RT}
 				} else {
-					finding = MakeErrorFinding("Error", IssueKindInventoryError, ae.Error())
+					finding = makeErrorFinding("Error", IssueKindInventoryError, ae.Error())
 				}
 			} else {
-				finding = MakeErrorFinding("Error", IssueKindInventoryError, err.Error())
+				finding = makeErrorFinding("Error", IssueKindInventoryError, err.Error())
 			}
 		} else {
-			issuesPerConfiguration := make(map[string][]string, 0)
+			issuesPerConfiguration := map[string][]string{}
 			for _, c := range r.InventoryConfigurationList {
 				location, issues := checkInventoryConfiguration(c)
 				if location != "" {
@@ -308,7 +307,7 @@ func checkInventoryConfiguration(c types.InventoryConfiguration) (string, []stri
 	return bucket + "/" + *c.Destination.S3BucketDestination.Prefix, []string{}
 }
 
-func checkVersioning(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+func checkVersioning(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	const R = "Enable versioning"
 	const RT = `
 resource "aws_s3_bucket_versioning" "{{ .Bucket }}" {
@@ -321,11 +320,11 @@ resource "aws_s3_bucket_versioning" "{{ .Bucket }}" {
 	results := make([]Finding, 0, len(buckets))
 	for i := range buckets {
 		var finding Finding
-		r, err := client.GetBucketVersioning(context.TODO(), &s3.GetBucketVersioningInput{
+		r, err := client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
-			finding = MakeErrorFinding("Error", IssueKindVersioningError, err.Error())
+			finding = makeErrorFinding("Error", IssueKindVersioningError, err.Error())
 		} else {
 			status := string(r.Status)
 			if status == "" {
@@ -354,7 +353,7 @@ resource "aws_s3_bucket_versioning" "{{ .Bucket }}" {
 	summarizeIssues(results, "Bucket Versioning")
 }
 
-func checkEncryption(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+func checkEncryption(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	R := "Enable Bucket Key" // (see 'Properties' -> 'Default Encryption' in the AWS S3 Console)
 	RT := `
 resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .Bucket }}" {
@@ -377,24 +376,24 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .Bucket }}" {
 	for i := range buckets {
 		var finding Finding
 		// Get bucket encryption
-		r, err := client.GetBucketEncryption(context.TODO(), &s3.GetBucketEncryptionInput{
+		r, err := client.GetBucketEncryption(ctx, &s3.GetBucketEncryptionInput{
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
-			finding = MakeErrorFinding("Error", IssueKindEncryptionError, err.Error())
+			finding = makeErrorFinding("Error", IssueKindEncryptionError, err.Error())
 		} else {
 			if len(r.ServerSideEncryptionConfiguration.Rules) == 0 {
 				// This should not ever happen, really, as S3 applies default encryption in
 				// all cases.
-				finding = MakeErrorFinding("Error", IssueKindEncryptionError,
+				finding = makeErrorFinding("Error", IssueKindEncryptionError,
 					"We've found a bucket with no encryption at all. This is not supposed to happen, ever")
 			} else if len(r.ServerSideEncryptionConfiguration.Rules) > 1 {
-				finding = MakeErrorFinding("Error", IssueKindEncryptionError,
+				finding = makeErrorFinding("Error", IssueKindEncryptionError,
 					"We've found a bucket with multiple encryption rules. This is not supposed to happen, ever")
 			} else {
 				rule := r.ServerSideEncryptionConfiguration.Rules[0]
 				if rule.ApplyServerSideEncryptionByDefault == nil {
-					finding = MakeErrorFinding("Error", IssueKindEncryptionError,
+					finding = makeErrorFinding("Error", IssueKindEncryptionError,
 						"We've found a bucket with no encryption rules. This is not supposed to happen ever")
 				} else {
 					issue := ""
@@ -426,7 +425,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .Bucket }}" {
 	summarizeIssues(results, "Bucket Encryption")
 }
 
-func checkLogging(buckets []Bucket, client *s3.Client, issues *[]FindingWithBucket) {
+func checkLogging(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	R := "Enable S3 logging" // (see 'Properties' -> 'Server access logging' in the AWS S3 Console)
 	RT := `
 resource "aws_s3_bucket_logging" "{{ .Bucket }}" {
@@ -442,11 +441,11 @@ resource "aws_s3_bucket_logging" "{{ .Bucket }}" {
 	for i := range buckets {
 		var finding Finding
 		// Get bucket logging
-		r, err := client.GetBucketLogging(context.TODO(), &s3.GetBucketLoggingInput{
+		r, err := client.GetBucketLogging(ctx, &s3.GetBucketLoggingInput{
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
-			finding = MakeErrorFinding("Error", IssueKindLoggingError, err.Error())
+			finding = makeErrorFinding("Error", IssueKindLoggingError, err.Error())
 		} else {
 			if r.LoggingEnabled == nil {
 				finding = Finding{"Not enabled", IssueKindLoggingNotSet, "",
@@ -506,36 +505,19 @@ func summarizeIssues(results []Finding, checkName string) {
 	fmt.Printf("\n")
 }
 
-func runS3Checks(cfg aws.Config, api *Api, identity string) []Bucket {
-	fmt.Printf(green("Running S3 checks\n\n"))
-
-	client := s3.NewFromConfig(cfg)
-
-	bucketNames, err := listS3Buckets(client)
+// Run S3 checks and return the list of buckets with findings and issues, as well
+// as separate global list of all issues.
+// The function tries to run and return something in face of all errors, and will only
+// return error is we can't do anything -- like we can't list buckets.
+func runS3Checks(ctx context.Context, s3client *s3.Client) ([]Bucket, []FindingWithBucket, error) {
+	buckets, err := listBuckets(s3client)
 	if err != nil {
-		var ae smithy.APIError
-		if errors.As(err, &ae) {
-			color.Red("Could not list buckets: %s: %s", ae.ErrorCode(), ae.ErrorMessage())
-		} else {
-			color.Red("Could not list buckets: %s", err.Error())
-		}
-		return []Bucket{}
+		return nil, nil, err
 	}
-
-	fmt.Printf("Found %d buckets\n\n", len(bucketNames))
-
-	buckets := make([]Bucket, 0, len(bucketNames))
-	for _, bucket := range bucketNames {
-		// For testing, only focus on interesting buckets
-		if strings.HasPrefix(bucket, "joom-analytics-") {
-			buckets = append(buckets, Bucket{Name: bucket})
-		}
-	}
-	buckets = buckets[0:10]
 
 	for i := range buckets {
 		// Get bucket region
-		r, err := client.GetBucketLocation(context.TODO(), &s3.GetBucketLocationInput{
+		r, err := s3client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
 			Bucket: &buckets[i].Name,
 		})
 		if err != nil {
@@ -547,25 +529,39 @@ func runS3Checks(cfg aws.Config, api *Api, identity string) []Bucket {
 
 	issues := make([]FindingWithBucket, 0)
 
-	checkAclSettings(buckets, client, &issues)
+	checkACLSettings(ctx, s3client, buckets, &issues)
 
-	checkVersioning(buckets, client, &issues)
+	checkVersioning(ctx, s3client, buckets, &issues)
 
-	checkEncryption(buckets, client, &issues)
+	checkEncryption(ctx, s3client, buckets, &issues)
 
-	checkLogging(buckets, client, &issues)
+	checkLogging(ctx, s3client, buckets, &issues)
 
-	checkInventory(buckets, client, &issues)
+	checkInventory(ctx, s3client, buckets, &issues)
 
-	writeBasicIssues(issues, identity)
-
-	if api.IsConfigured() {
-		uploadBasicIssues(api, buckets)
-	}
-
-	return buckets
+	return buckets, issues, nil
 }
 
+func listBuckets(s3client *s3.Client) ([]Bucket, error) {
+	bucketNames, err := listS3Buckets(s3client)
+	if err != nil {
+		return nil, err
+	}
+
+	buckets := make([]Bucket, 0, len(bucketNames))
+	for _, bucket := range bucketNames {
+		// For testing, only focus on interesting buckets
+		if strings.HasPrefix(bucket, "joom-analytics-") {
+			buckets = append(buckets, Bucket{Name: bucket})
+		}
+	}
+	buckets = buckets[0:10]
+	return buckets, nil
+}
+
+// Write the detailed list of found issues to a file.
+// Optionally, write a Terraform file with recommendations.
+// This function is called only when we run in CLI mode.
 func writeBasicIssues(issues []FindingWithBucket, identity string) {
 	// Group issues by buckets
 	issuesByBucket := make(map[string][]FindingWithBucket)
@@ -592,7 +588,7 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 	for bucket, issues := range issuesByBucket {
 		fmt.Fprintf(f, "%s:\n", bucket)
 		for _, issue := range issues {
-			fmt.Fprintf(f, "  - %s\n", issue.Recommentation)
+			fmt.Fprintf(f, "  - %s\n", issue.Recommendation)
 		}
 		fmt.Fprintf(f, "\n")
 	}
@@ -638,9 +634,8 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 		Validate: validate,
 	}
 	result, _ = prompt2.Run()
-	si := strings.Index(result, "/")
-	logBucket := result[0:si]
-	logPrefix := result[si+1:]
+	// validator above makes sure there is a slash
+	logBucket, logPrefix, _ := strings.Cut(result, "/")
 	if logPrefix[len(logPrefix)-1] == '/' {
 		logPrefix = logPrefix[0 : len(logPrefix)-1]
 	}
@@ -675,11 +670,11 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 			issueHeader := `
 // Bucket: %s
 // Issue: %s %s
-// Recommentation: %s
+// Recommendation: %s
 `
-			fmt.Fprintf(tf, issueHeader, bucket, issue.Issue, issue.IssueDetails, issue.Recommentation)
-			if issue.RecommentationTf != "" {
-				tmpl, err := template.New("tf").Parse(issue.RecommentationTf)
+			fmt.Fprintf(tf, issueHeader, bucket, issue.Issue, issue.IssueDetails, issue.Recommendation)
+			if issue.RecommendationTF != "" {
+				tmpl, err := template.New("tf").Parse(issue.RecommendationTF)
 				if err != nil {
 					fmt.Fprintf(tf, "// Internal error: %s\n", err.Error())
 				}
@@ -688,14 +683,14 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 					fmt.Fprintf(tf, "// Internal error: %s\n", err.Error())
 				}
 			} else {
-				fmt.Fprintf(tf, "// Sadly, we coulnd not generate Terraform recommendation\n\n")
+				fmt.Fprintf(tf, "// Sadly, we could not generate Terraform recommendation\n\n")
 			}
 		}
 	}
 	fmt.Println(green("Wrote Terraform recommedations to 's3-recommentations.tf'\n"))
 }
 
-func uploadBasicIssues(api *Api, buckets []Bucket) {
+func uploadBasicIssues(api *JoomCloudAPI, buckets []Bucket) {
 	bucketsJson, err := json.Marshal(buckets)
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -703,9 +698,9 @@ func uploadBasicIssues(api *Api, buckets []Bucket) {
 	}
 
 	fmt.Println("Sending to API")
-	err = api.Post("storage-advisor/buckets", bucketsJson)
+	err = api.PostS3Buckets(bucketsJson)
 	if err != nil {
-		fmt.Println("Unable to send buckets list to the API:", err.Error())
+		fmt.Println("Unable to send buckets list to the API:", err)
 		return
 	}
 }

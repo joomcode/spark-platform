@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/rs/zerolog/log"
 	"io"
-	"log"
 	"strings"
 	"time"
 )
@@ -37,13 +37,13 @@ func presignFile(presignClient *s3.PresignClient, bucket string, fileKey string)
 	return presignGetObject.URL
 }
 
-func uploadInventoryForBucket(client *s3.Client, api *Api, bucket string, prefix string) {
+func uploadInventoryForBucket(client *s3.Client, api *JoomCloudAPI, bucket string, prefix string) {
 
-	datePrefixies, err := listCommonPrefixes(client, bucket, prefix)
+	datePrefixes, err := listCommonPrefixes(client, bucket, prefix)
 	dates := make([]time.Time, 0, 20)
 
 	dateFormat := "2006-01-02T15-04Z"
-	for _, datePrefix := range datePrefixies {
+	for _, datePrefix := range datePrefixes {
 		dateStr := strings.TrimPrefix(datePrefix, prefix)
 		dateStr = strings.TrimPrefix(dateStr, "/")
 		dateStr = strings.TrimSuffix(dateStr, "/")
@@ -53,7 +53,7 @@ func uploadInventoryForBucket(client *s3.Client, api *Api, bucket string, prefix
 		}
 	}
 	if len(dates) == 0 {
-		log.Println("Error: No dates found")
+		log.Warn().Msgf("no inventory data found at s3://%s/%s", bucket, prefix)
 		return
 	}
 
@@ -65,9 +65,9 @@ func uploadInventoryForBucket(client *s3.Client, api *Api, bucket string, prefix
 		}
 	}
 
-	log.Printf("Max date: %s\n", maxDate.Format(time.DateTime))
 	partitionDate := maxDate.Format(dateFormat)
-	content, err := readObjectContent(client, bucket, prefix+"/"+partitionDate+"/manifest.json")
+	manifestPath := prefix + "/" + partitionDate + "/manifest.json"
+	content, err := readObjectContent(client, bucket, manifestPath)
 	if err != nil {
 		log.Printf(err.Error())
 	}
@@ -75,9 +75,9 @@ func uploadInventoryForBucket(client *s3.Client, api *Api, bucket string, prefix
 	var inputManifest InventoryManifest
 	err = json.Unmarshal(content, &inputManifest)
 	if err != nil {
-		log.Fatalf("Could not unmarsal inputManifest: %s\n", err.Error())
+		log.Err(err).Msgf("could not unmarshal manifest %s", manifestPath)
 	}
-	log.Printf("Manifest has %d files for bucket %s\n", len(inputManifest.Files), inputManifest.Bucket)
+	log.Debug().Msgf("manifest has %d files for bucket %s\n", len(inputManifest.Files), inputManifest.Bucket)
 
 	presignClient := s3.NewPresignClient(client)
 	outputManifest := InventoryManifest{PartitionDate: partitionDate, Version: manifestVersion, Bucket: inputManifest.Bucket}
@@ -96,12 +96,12 @@ func uploadInventoryForBucket(client *s3.Client, api *Api, bucket string, prefix
 		panic(err)
 	}
 
-	err = api.Post("storage-advisor/s3-inventory", marshal)
+	err = api.PostS3Inventory(marshal)
 	if err != nil {
-		log.Printf("Error: could not upload inventory: %s\n", err.Error())
+		log.Err(err).Msgf("could not upload inventory to API")
 	}
 
-	log.Printf("Uploaded data for s3://%s/%s", bucket, prefix)
+	log.Debug().Msgf("uploaded data for s3://%s/%s", bucket, prefix)
 }
 
 func listCommonPrefixes(client *s3.Client, bucket string, prefix string) ([]string, error) {
@@ -116,14 +116,11 @@ func listCommonPrefixes(client *s3.Client, bucket string, prefix string) ([]stri
 		Delimiter: aws.String("/"),
 	}
 
-	log.Println("Listing prefix", bucket, prefix)
-
 	paginator := s3.NewListObjectsV2Paginator(client, params)
 	var commonPrefixes []string
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(context.Background())
 		if err != nil {
-			log.Println("Error:", err)
 			return nil, err
 		}
 		for _, commonPrefix := range output.CommonPrefixes {
