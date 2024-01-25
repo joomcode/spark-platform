@@ -510,6 +510,8 @@ func summarizeIssues(results []Finding, checkName string) {
 // The function tries to run and return something in face of all errors, and will only
 // return error is we can't do anything -- like we can't list buckets.
 func runS3Checks(ctx context.Context, s3client *s3.Client) ([]Bucket, []FindingWithBucket, error) {
+	fmt.Printf(green("Running S3 checks\n\n"))
+
 	buckets, err := listBuckets(s3client)
 	if err != nil {
 		return nil, nil, err

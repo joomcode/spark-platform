@@ -29,6 +29,6 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: ${{ matrix.goos }}
         goarch: ${{ matrix.goarch }}
-        goversion: 1.20
+        goversion: 1.20.13
         project_path: "./tools/storage-advisor"
         binary_name: "storage-advisor"

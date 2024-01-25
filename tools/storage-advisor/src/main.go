@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/aws/smithy-go"
+	smithy "github.com/aws/smithy-go"
 	"github.com/fatih/color"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -62,27 +62,28 @@ func main() {
 
 		stsOutput, err := sts.NewFromConfig(cfg).GetCallerIdentity(rootCtx, &sts.GetCallerIdentityInput{})
 		if err != nil {
-			fmt.Printf("Error: unable to get your AWS indentity\n\n" +
-				"Possibly, you did not login to AWS or your token has expired.\n" +
-				"Please try to login again. Then, verify your identity using\n\n" +
-				"    aws sts get-caller-identity\n\n" +
-				"If you are logged in, but still see this error, you might not\n" +
-				"have permissions to list S3 bucket. Double-check that IAM role\n" +
-				"associated with the role printed by the above command.\n\n")
-
+			fmt.Printf("Error: unable to get your AWS indentity: %v\n\n"+
+				"Possibly, you did not login to AWS or your token has expired.\n"+
+				"Please try to login again. Then, verify your identity using\n\n"+
+				"    aws sts get-caller-identity\n\n"+
+				"If you are logged in, but still see this error, you might not\n"+
+				"have permissions to list S3 bucket. Double-check that IAM role\n"+
+				"associated with the role printed by the above command.\n\n", err)
 			return
 		}
 		identity := *stsOutput.Arn
 		fmt.Printf("Info: your AWS identity is %s\n", identity)
 
 		buckets, issues, err := runS3Checks(rootCtx, client)
-		var ae smithy.APIError
-		if errors.As(err, &ae) {
-			color.Red("Could not list buckets: %s: %s", ae.ErrorCode(), ae.ErrorMessage())
-			return
-		} else {
-			color.Red("Could not list buckets: %s", err.Error())
-			return
+		if err != nil {
+			var ae smithy.APIError
+			if errors.As(err, &ae) {
+				color.Red("Could not list buckets: %s: %s", ae.ErrorCode(), ae.ErrorMessage())
+				return
+			} else {
+				color.Red("Could not list buckets: %s", err.Error())
+				return
+			}
 		}
 
 		writeBasicIssues(issues, identity)
