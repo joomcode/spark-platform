@@ -32,3 +32,16 @@ jobs:
         goversion: 1.20.13
         project_path: "./tools/storage-advisor/src"
         binary_name: "storage-advisor"
+
+  notarize:
+    needs: releases-matrix
+    runs-on: macos-latest
+    steps:
+    - uses: actions/download-artifact@v4
+    - name: Obtain release name
+      id: release-id
+      run: echo "RELEASE_TAG=$(jq -r .release.tag_name ${GITHUB_EVENT_PATH})" >> "$GITHUB_OUTPUT"
+    - name: Download artifacts
+      uses: uses: actions/upload-artifact@v4
+      with:
+        name: storage-advisor-cli-${{ steps.release-id.outputs.RELEASE_TAG }}-darwin-amd64.tar.gz
