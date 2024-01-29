@@ -42,6 +42,6 @@ jobs:
       id: release-id
       run: echo "RELEASE_TAG=$(jq -r .release.tag_name ${GITHUB_EVENT_PATH})" >> "$GITHUB_OUTPUT"
     - name: Download artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/download-artifactt@v4
       with:
         name: storage-advisor-cli-${{ steps.release-id.outputs.RELEASE_TAG }}-darwin-amd64.tar.gz
