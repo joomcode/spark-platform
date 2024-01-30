@@ -26,6 +26,8 @@ type Config struct {
 
 var mode = flag.String("mode", "cli", "Use as a CLI tool")
 
+var region = flag.String("region", "", "AWS region")
+
 var apiToken = flag.String("api-token", "", "API token for Joom Cloud")
 
 var apiEndpoint = flag.String("api-endpoint", "https://api.cloud.joom.ai/v1", "API endpoint URL")
@@ -37,6 +39,9 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error: could not initialize AWS config: %v\n", err)
 		return
+	}
+	if region != nil {
+		cfg.Region = *region
 	}
 	client := s3.NewFromConfig(cfg)
 	api := NewApi(*apiEndpoint, apiToken)
@@ -59,6 +64,16 @@ func main() {
 			}
 		}
 		log.Logger = zerolog.New(output).Level(zerolog.InfoLevel)
+
+		if cfg.Region == "" {
+			fmt.Printf("Error: AWS region is not set.\n\n" +
+				"Please either configured default region with\n" +
+				"    aws configure\n" +
+				"or specify the region as option, e.g.\n" +
+				"    storage-advisor -region eu-central-1\n" +
+				"(adjusting to your actual region)\n")
+			return
+		}
 
 		stsOutput, err := sts.NewFromConfig(cfg).GetCallerIdentity(rootCtx, &sts.GetCallerIdentityInput{})
 		if err != nil {
