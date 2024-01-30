@@ -552,12 +552,8 @@ func listBuckets(s3client *s3.Client) ([]Bucket, error) {
 
 	buckets := make([]Bucket, 0, len(bucketNames))
 	for _, bucket := range bucketNames {
-		// For testing, only focus on interesting buckets
-		if strings.HasPrefix(bucket, "joom-analytics-") {
-			buckets = append(buckets, Bucket{Name: bucket})
-		}
+		buckets = append(buckets, Bucket{Name: bucket})
 	}
-	buckets = buckets[0:10]
 	return buckets, nil
 }
 
