@@ -213,7 +213,6 @@ resource "aws_s3_bucket_inventory" "{{ .Bucket }}" {
 						location = location[0 : len(location)-1]
 					}
 					location = location + "/" + buckets[i].Name + "/" + *c.Id
-					fmt.Printf("%s: usable inventory at %s\n", buckets[i].Name, location)
 					buckets[i].UsableInventory = location
 					break
 				}
