@@ -9,39 +9,110 @@ permissions:
     packages: write
 
 jobs:
-  releases-matrix:
-    name: Release
+  build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         # build and publish in parallel: linux/386, linux/amd64, linux/arm64, windows/386, windows/amd64, darwin/amd64, darwin/arm64
         goos: [linux, windows, darwin]
-        goarch: ["386", amd64, arm64]
+        goarch: [amd64, arm64]
         exclude:
-          - goarch: "386"
-            goos: darwin
           - goarch: arm64
             goos: windows
     steps:
-    - uses: actions/checkout@v3
-    - uses: wangyoucao577/go-release-action@v1
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: ${{ matrix.goos }}
-        goarch: ${{ matrix.goarch }}
-        goversion: 1.20.13
-        project_path: "./tools/storage-advisor/src"
-        binary_name: "storage-advisor"
-
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20.x'
+      - name: Install dependencies
+        working-directory: ./tools/storage-advisor/src 
+        run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go get .
+      - name: Build
+        working-directory: ./tools/storage-advisor/src
+        run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }} .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: tools/storage-advisor/src/storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }}
+      - name: Archive the binary
+        working-directory: ./tools/storage-advisor/src
+        run: |
+          mv storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }} storage-advisor
+          tar -czvf storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz storage-advisor
+          sha256sum storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        if: ${{ matrix.goos != 'darwin' }}
+        with:
+          file: tools/storage-advisor/src/storage-advisor-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          tag: ${{ github.ref }}
+          overwrite: true
+  
   notarize:
-    needs: releases-matrix
+    needs: [build]
     runs-on: macos-latest
     steps:
-    - uses: actions/download-artifact@v4
     - name: Obtain release name
       id: release-id
       run: echo "RELEASE_TAG=$(jq -r .release.tag_name ${GITHUB_EVENT_PATH})" >> "$GITHUB_OUTPUT"
     - name: Download artifacts
-      uses: uses: actions/upload-artifact@v4
+      uses: actions/download-artifact@v4
       with:
-        name: storage-advisor-cli-${{ steps.release-id.outputs.RELEASE_TAG }}-darwin-amd64.tar.gz
+        pattern: storage-advisor-darwin*
+        merge-multiple: true
+    - name: List
+      run: ls -l
+    - name: Sign
+      env: # Or as an environment variable
+        DEVELOPER_ID_APPLICATION_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_P12 }}
+        DEVELOPER_ID_APPLICATION_P12_PWD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PWD }}
+        FASTLANE_USER: ${{ secrets.FASTLANE_USER }}
+        FASTLANE_PASSWORD: ${{ secrets.FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD }}
+      run: |
+
+        lipo -create -output storage-advisor storage-advisor-darwin-arm64 storage-advisor-darwin-amd64
+
+        KEYCHAIN_NAME=$(LC_CTYPE=C openssl rand -base64 18 | tr -dc 'a-zA-Z' | head -c 16)
+        KEYCHAIN_PASSWORD=$(LC_CTYPE=C openssl rand -base64 18 | tr -dc 'a-zA-Z' | head -c 16)
+
+        security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_NAME}"
+        security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_NAME}"
+
+        curl -O https://www.apple.com/appleca/AppleIncRootCertificate.cer
+        security import AppleIncRootCertificate.cer -t cert -k "${KEYCHAIN_NAME}" -T /usr/bin/codesign -T /usr/bin/xcodebuild
+        curl -O https://www.apple.com/certificateauthority/DeveloperIDCA.cer
+        security import DeveloperIDCA.cer -t cert -k "${KEYCHAIN_NAME}" -T /usr/bin/codesign -T /usr/bin/xcodebuild
+        rm AppleIncRootCertificate.cer DeveloperIDCA.cer
+        echo "$DEVELOPER_ID_APPLICATION_P12" | base64 -d > signing_cert.p12
+        security import signing_cert.p12 -P "$DEVELOPER_ID_APPLICATION_P12_PWD" -k "${KEYCHAIN_NAME}" -T /usr/bin/codesign -T /usr/bin/xcodebuild
+        rm signing_cert.p12
+        security set-keychain-settings $KEYCHAIN_NAME
+
+        security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_NAME}"
+
+        # we need to add our new keychain to user search list to use the certificate
+        keychainNames=();
+        for keychain in $(security list-keychains -d user)
+        do
+          basename=$(basename "\$keychain")
+          keychainName=${basename::${#basename}-4}
+          keychainNames+=("$keychainName")
+        done
+        security -v list-keychains -s "${keychainNames[@]}" $KEYCHAIN_NAME
+        codesign -s 98A9FF12B0FCCCEEDE752C824A2A7E189B5AEEAE -o runtime -v storage-advisor
+        security -v delete-keychain $KEYCHAIN_NAME
+
+        zip storage-advisor-macos.zip storage-advisor
+        xcrun notarytool submit --apple-id $FASTLANE_USER --password $FASTLANE_PASSWORD --team-id WDCQ6B387N storage-advisor-macos.zip --wait > "notarytool.log" 2>&1
+        SUBMISSIONID=`awk '/id: / { print $2;exit; }' notarytool.log`
+        echo "id: ${SUBMISSIONID}"
+        xcrun notarytool log ${SUBMISSIONID} --apple-id $FASTLANE_USER --password $FASTLANE_PASSWORD --team-id WDCQ6B387N
+        chmod +x storage-advisor
+        tar -czvf storage-advisor-macos.tar.gz storage-advisor
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        file: storage-advisor-macos.tar.gz
+        tag: ${{ github.ref }}
+        overwrite: true
