@@ -65,10 +65,10 @@ jobs:
     - name: Lipo
       run: lipo -create -output storage-advisor storage-advisor-darwin-arm64 storage-advisor-darwin-amd64
     - name: Store fat binary
-      - uses: actions/upload-artifact@v4
-        with:
-          name: storage-advisor-darwin
-          path: storage-advisor
+      uses: actions/upload-artifact@v4
+      with:
+        name: storage-advisor-darwin
+        path: storage-advisor
     - name: Sign
       env: # Or as an environment variable
         DEVELOPER_ID_APPLICATION_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_P12 }}
