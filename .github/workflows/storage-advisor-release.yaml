@@ -63,8 +63,7 @@ jobs:
     - name: List
       run: ls -l
     - name: Lipo
-      run: |
-        lipo -create -output storage-advisor storage-advisor-darwin-arm64 storage-advisor-darwin-amd64
+      run: lipo -create -output storage-advisor storage-advisor-darwin-arm64 storage-advisor-darwin-amd64
     - name: Store fat binary
       - uses: actions/upload-artifact@v4
         with:
