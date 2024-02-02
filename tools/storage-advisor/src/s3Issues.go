@@ -108,8 +108,8 @@ type Bucket struct {
 func getACLSettingsForBucket(ctx context.Context, client *s3.Client, bucket string) Finding {
 	const R = "Set bucket ownership to 'Bucket owner enforced'" // ('Permissions' -> 'Object Ownership' in AWS S3 Console)
 	const RT = `
-resource "aws_s3_bucket_ownership_controls" "{{ .Bucket }}" {
-  bucket = {{ .Bucket }}
+resource "aws_s3_bucket_ownership_controls" "{{ .BucketResourceName }}" {
+  bucket = "{{ .Bucket }}"
   rule {
     object_ownership = "BucketOwnerEnforced"
   }
@@ -164,8 +164,8 @@ func checkACLSettings(ctx context.Context, client *s3.Client, buckets []Bucket, 
 func checkInventory(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	R := "Enable object inventory"
 	RT := `
-resource "aws_s3_bucket_inventory" "{{ .Bucket }}" {
-  bucket = {{ .Bucket }}
+resource "aws_s3_bucket_inventory" "{{ .BucketResourceName }}" {
+  bucket = "{{ .Bucket }}"
   name   = "ParquetDaily"
 
   included_object_versions = "All"
@@ -309,8 +309,8 @@ func checkInventoryConfiguration(c types.InventoryConfiguration) (string, []stri
 func checkVersioning(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	const R = "Enable versioning"
 	const RT = `
-resource "aws_s3_bucket_versioning" "{{ .Bucket }}" {
-  bucket = {{ .Bucket }}
+resource "aws_s3_bucket_versioning" "{{ .BucketResourceName }}" {
+  bucket = "{{ .Bucket }}"
   versioning_configuration {
     status = "Enabled"
   }
@@ -355,8 +355,8 @@ resource "aws_s3_bucket_versioning" "{{ .Bucket }}" {
 func checkEncryption(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	R := "Enable Bucket Key" // (see 'Properties' -> 'Default Encryption' in the AWS S3 Console)
 	RT := `
-resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .Bucket }}" {
-  bucket = {{ .Bucket }}
+resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .BucketResourceName }}" {
+  bucket = "{{ .Bucket }}"
 
   rule {
     bucket_key_enabled = true
@@ -427,8 +427,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "{{ .Bucket }}" {
 func checkLogging(ctx context.Context, client *s3.Client, buckets []Bucket, issues *[]FindingWithBucket) {
 	R := "Enable S3 logging" // (see 'Properties' -> 'Server access logging' in the AWS S3 Console)
 	RT := `
-resource "aws_s3_bucket_logging" "{{ .Bucket }}" {
-  bucket = {{ .Bucket }}
+resource "aws_s3_bucket_logging" "{{ .BucketResourceName }}" {
+  bucket = "{{ .Bucket }}"
 
   target_bucket = "{{ .LogBucket }}"
   // We need to explicitly add bucket name in the prefix.
@@ -608,12 +608,13 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 		return
 	}
 
-	fmt.Println("We'll need to know which bucket is good for S3 logs and inventory.")
+	fmt.Println("We need to know which bucket you want to use for S3 logs and inventory, so we can specify that in the generated TF script..")
 
 	validate := func(input string) error {
 		if input == "" {
 			return errors.New("Bucket name cannot be empty")
 		}
+		input = strings.TrimPrefix(input, "s3://")
 		si := strings.Index(input, "/")
 		if si == -1 {
 			return errors.New("Please specify both bucket and prefix, separated by '/'")
@@ -627,11 +628,12 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 		return nil
 	}
 	prompt2 := promptui.Prompt{
-		Label:    "Specify the bucket/prefix for logging and inventory",
+		Label:    "Specify the bucket/prefix for logging and inventory, e.g. 'acme-logs/s3'",
 		Validate: validate,
 	}
 	result, _ = prompt2.Run()
 	// validator above makes sure there is a slash
+	result = strings.TrimPrefix(result, "s3://")
 	logBucket, logPrefix, _ := strings.Cut(result, "/")
 	if logPrefix[len(logPrefix)-1] == '/' {
 		logPrefix = logPrefix[0 : len(logPrefix)-1]
@@ -657,10 +659,20 @@ func writeBasicIssues(issues []FindingWithBucket, identity string) {
 
 	for bucket, issues := range issuesByBucket {
 
+		// Terraform resource names are stricker than bucket names.
+		bucketResourceName := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') || r == '_' || r == '-' {
+				return r
+			}
+			return '_'
+		}, bucket)
+
 		context := map[string]interface{}{
-			"Bucket":    bucket,
-			"LogBucket": logBucket,
-			"LogPrefix": logPrefix,
+			"Bucket":             bucket,
+			"BucketResourceName": bucketResourceName,
+			"LogBucket":          logBucket,
+			"LogPrefix":          logPrefix,
 		}
 
 		for _, issue := range issues {
