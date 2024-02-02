@@ -508,12 +508,23 @@ func summarizeIssues(results []Finding, checkName string) {
 // as separate global list of all issues.
 // The function tries to run and return something in face of all errors, and will only
 // return error is we can't do anything -- like we can't list buckets.
-func runS3Checks(ctx context.Context, s3client *s3.Client) ([]Bucket, []FindingWithBucket, error) {
+func runS3Checks(ctx context.Context, s3client *s3.Client, bucketsFilter map[string]struct{}) ([]Bucket, []FindingWithBucket, error) {
 	fmt.Printf(green("Running S3 checks\n\n"))
 
 	buckets, err := listBuckets(s3client)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if len(bucketsFilter) > 0 {
+		filtered := make([]Bucket, 0, len(bucketsFilter))
+		for _, b := range buckets {
+			if _, found := bucketsFilter[b.Name]; found {
+				filtered = append(filtered, b)
+			}
+		}
+		fmt.Printf("Filtered %d buckets using %d filters into %d buckets", len(buckets), len(bucketsFilter), len(filtered))
+		buckets = filtered
 	}
 
 	for i := range buckets {

@@ -28,6 +28,8 @@ var mode = flag.String("mode", "cli", "Use as a CLI tool")
 
 var region = flag.String("region", "", "AWS region")
 
+var bucketsFilterS = flag.String("buckets", "", "Comma-separated list of buckets to check")
+
 var apiToken = flag.String("api-token", "", "API token for Joom Cloud")
 
 var apiEndpoint = flag.String("api-endpoint", "https://api.cloud.joom.ai/v1", "API endpoint URL")
@@ -45,6 +47,14 @@ func main() {
 	}
 	client := s3.NewFromConfig(cfg)
 	api := NewApi(*apiEndpoint, apiToken)
+
+	bucketsFilter := map[string]struct{}{}
+	if bucketsFilterS != nil && *bucketsFilterS != "" {
+		for _, bucket := range strings.Split(*bucketsFilterS, ",") {
+			bucketsFilter[bucket] = struct{}{}
+		}
+		fmt.Printf("Filtering buckets: %v\n", len(bucketsFilter))
+	}
 
 	switch *mode {
 	case "cli":
@@ -89,7 +99,7 @@ func main() {
 		identity := *stsOutput.Arn
 		fmt.Printf("Info: your AWS identity is %s\n", identity)
 
-		buckets, issues, err := runS3Checks(rootCtx, client)
+		buckets, issues, err := runS3Checks(rootCtx, client, bucketsFilter)
 		if err != nil {
 			var ae smithy.APIError
 			if errors.As(err, &ae) {
@@ -125,7 +135,7 @@ func main() {
 				log.Info().Msgf("running with AWS identity %s", *stsOutput.Arn)
 			}
 
-			buckets, _, err := runS3Checks(rootCtx, client)
+			buckets, _, err := runS3Checks(rootCtx, client, bucketsFilter)
 			if err != nil {
 				log.Fatal().Err(err).Msg("could not list buckets")
 			}
