@@ -53,7 +53,6 @@ func main() {
 		for _, bucket := range strings.Split(*bucketsFilterS, ",") {
 			bucketsFilter[bucket] = struct{}{}
 		}
-		fmt.Printf("Filtering buckets: %v\n", len(bucketsFilter))
 	}
 
 	switch *mode {

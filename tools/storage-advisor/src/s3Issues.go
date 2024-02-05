@@ -546,7 +546,6 @@ func runS3Checks(ctx context.Context, s3client *s3.Client, bucketsFilter map[str
 				filtered = append(filtered, b)
 			}
 		}
-		fmt.Printf("Filtered %d buckets using %d filters into %d buckets", len(buckets), len(bucketsFilter), len(filtered))
 		buckets = filtered
 	}
 
