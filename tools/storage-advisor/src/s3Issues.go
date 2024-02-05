@@ -315,6 +315,29 @@ resource "aws_s3_bucket_versioning" "{{ .BucketResourceName }}" {
     status = "Enabled"
   }
 }
+resource "aws_s3_bucket_lifecycle_configuration" "{{ .BucketResourceName }}" {
+  bucket = "{{ .Bucket }}"
+  rule {
+    id = "remove old versions"
+    status = "Enabled"
+
+    // Usually, two weeks are enough to detect any data corruption or
+    // unplanned deletions. After that, expire old versions
+    noncurrent_version_expiration {
+      noncurrent_days = 14
+    }
+
+    // Expire delete marker after non-current versions have expired
+    expiration {
+        expired_object_delete_marker = true
+    }
+
+    // Remove left-over objects from multi-part uploads that were not completed
+    abort_incomplete_multipart_upload {
+        days_after_initiation = 1
+    }
+  }
+}
 `
 	results := make([]Finding, 0, len(buckets))
 	for i := range buckets {
