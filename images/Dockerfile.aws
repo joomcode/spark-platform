@@ -1,0 +1,32 @@
+
+FROM apache/spark:3.5.0
+
+USER root
+# Install Sprak/Hadoop AWS support.
+#
+# - spark-hadoo-cloud is a tiny package with a few bridge classes
+#
+# - hadoop-aws implements actual S3 support. The version should make one in Spark, which can be found by
+#
+#      docker run --rm -it apache/spark:3.5.0 bash -c 'find / -name "hadoop-client*.jar" 2> /dev/null'
+#
+# - We then need AWS jars. hadoop-aws up to version 3.3.6 depends on aws-java-sdk-bundle, but it is 500M and
+#   includes everything, including AWS satellite
+#   APIs, so try to install only the required parts
+# - aws-s3 is obviouisly needed
+# - aws-core is a dependency
+# - aws-kms is necessary to read KMS-encrypted buckets
+# - aws-sts is needed for permissions to work
+RUN cd /opt/spark/jars \
+    && wget https://repo1.maven.org/maven2/org/apache/spark/spark-hadoop-cloud_2.13/3.5.0/spark-hadoop-cloud_2.13-3.5.0.jar \
+    && wget https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+    && wget https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-s3/1.12.581/aws-java-sdk-s3-1.12.581.jar \
+    && wget https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-core/1.12.581/aws-java-sdk-core-1.12.581.jar \
+    && wget https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-kms/1.12.581/aws-java-sdk-kms-1.12.581.jar \
+    && wget https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-sts/1.12.581/aws-java-sdk-sts-1.12.581.jar \
+    && wget https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-dynamodb/1.12.581/aws-java-sdk-dynamodb-1.12.581.jar
+
+RUN mkdir /opt/spark/conf
+COPY spark-defaults.conf /opt/spark/conf/
+
+USER 185
