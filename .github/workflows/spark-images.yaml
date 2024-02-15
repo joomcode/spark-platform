@@ -5,7 +5,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: spark-aws
+  IMAGE_NAME: joomcode/spark-aws
 
 
 jobs:
