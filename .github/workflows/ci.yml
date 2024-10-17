@@ -48,4 +48,4 @@ jobs:
             -Ppublication.repository.maven.password=${{ secrets.SONATYPE_PASSWORD }} \
             -Ppublication.signing.keyId=${{ secrets.SIGNING_KEY_ID }} \
             -Ppublication.signing.password=${{ secrets.SIGNING_PASSWORD }} \
-            -Ppublication.signing.secretKey='${{ secrets.SIGNING_SECRET_KEY }}'
+            -Ppublication.signing.secretKey='${{ secrets.SIGNING_SECRET_KEY }}' -i
