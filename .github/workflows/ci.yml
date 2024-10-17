@@ -38,9 +38,10 @@ jobs:
 
       - name: Upload Artifacts
         if: contains(github.ref, '/tags/v') && matrix.spark == '3.5.0'
+        # In Parallel mode, more than one repository will be created in sonatype, each incomplete,
+        # so disable it.
         run: >
             ./gradlew publishMavenPublicationToSonatypeRepository
-          # In Parallel mode, more than one repository will be created in sonatype, each incomplete
             -Dorg.gradle.parallel=false
             -Pscala.version=${{ matrix.scala }}
             -Pspark.version=${{ matrix.spark}}
