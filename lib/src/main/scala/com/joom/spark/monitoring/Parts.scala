@@ -37,6 +37,7 @@ case class StageSummary(
                          shuffleWriteGB: Double,
                          peakExecutionMemoryGB: Double,
                          properties: Map[String, String],
+                         endTs: Long,
                        )
 
 case class ExecutorMetric(
