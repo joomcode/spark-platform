@@ -34,7 +34,7 @@ jobs:
       - name: Build and Test
         env:
           JOOM_CLOUD_TOKEN: ${{ secrets.JOOM_CLOUD_TOKEN }}
-        run: ./gradlew build -Pscala.version=${{ matrix.scala }} -Pspark.version=${{ matrix.spark }} -i
+        run: ./gradlew build sign -Pscala.version=${{ matrix.scala }} -Pspark.version=${{ matrix.spark }} -i
 
       - name: Upload Artifacts
         if: contains(github.ref, '/tags/v') && matrix.spark == '3.5.0'
