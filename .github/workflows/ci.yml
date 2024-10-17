@@ -39,7 +39,7 @@ jobs:
       - name: Upload Artifacts
         if: contains(github.ref, '/tags/v') && matrix.spark == '3.5.0'
         run: |
-          ./gradlew publishMavenPublicationToSonatypeRepository \
+          ./gradlew --no-configuration-cache publishMavenPublicationToSonatypeRepository \
             -Pscala.version=${{ matrix.scala }} \
             -Pspark.version=${{ matrix.spark}} \
             -Ppublication.repository.maven.name=Sonatype \
