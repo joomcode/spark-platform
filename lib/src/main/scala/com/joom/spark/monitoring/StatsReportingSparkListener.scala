@@ -48,7 +48,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String,
                         var startedTaskCount: Int = 0,
                         var failureReason: Option[String] = None,
                         var properties: Map[String, String] = Map(),
-                        var details: Option[String] = None)
+                        var name: Option[String] = None)
   private val tasksPerStage = mutable.Map[StageFullId, mutable.ArrayBuffer[(TaskMetrics, TaskEndReason)]]()
   private val stageState = mutable.Map[StageFullId, StageState]()
   private val appStart: Instant = Instant.now()
@@ -158,7 +158,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String,
     val startTime = stageSubmitted.stageInfo.submissionTime.map(Instant.ofEpochMilli).getOrElse(Instant.now())
     val state = stageState.getOrElseUpdate(stageFullId, StageState(startTime))
     state.properties = properties
-    state.details = Some(stageSubmitted.stageInfo.details)
+    state.name = Some(stageSubmitted.stageInfo.name)
   }
 
   override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
@@ -239,7 +239,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String,
         val failureReason = state.failureReason
         val startTime = state.startTime
         val summary = summarizeStage(appId, stageFullId.stageId, stageFullId.attemptNumber, success, failureReason,
-          startTime, tasks.toSeq, state.properties, endTs, state.details)
+          startTime, tasks.toSeq, state.properties, endTs, state.name)
 
         implicit val codec: JsonValueCodec[StageSummary] = JsonCodecMaker.make
         send("stages", summary.get)
@@ -346,7 +346,7 @@ object StatsReportingSparkListener {
                              rawTaskMetrics: Seq[(TaskMetrics, TaskEndReason)],
                              properties: Map[String, String],
                              endTime: Option[Long],
-                             details: Option[String],
+                             name: Option[String],
                             ): Option[StageSummary] = {
     val taskMetrics = rawTaskMetrics.map(_._1)
       .filter(_ != null) // For failed tasks, there will be 'null' TaskMetrics instances.
@@ -385,7 +385,7 @@ object StatsReportingSparkListener {
       peakExecutionMemoryGB = taskMetrics.map(_.peakExecutionMemory).sum / GiB,
       properties = properties,
       endTs = endTs,
-      details = details,
+      name = name,
     ))
   }
 }

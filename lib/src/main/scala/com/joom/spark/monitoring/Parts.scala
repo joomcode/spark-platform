@@ -39,7 +39,7 @@ case class StageSummary(
                          peakExecutionMemoryGB: Double,
                          properties: Map[String, String],
                          endTs: Long,
-                         details: Option[String],
+                         name: Option[String],
                        )
 
 case class ExecutorMetric(
