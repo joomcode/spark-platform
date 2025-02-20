@@ -34,10 +34,12 @@ case class StageSummary(
                          memorySpillGB: Double,
                          diskSpillGB: Double,
                          inputGB: Double,
+                         outputGB: Double,
                          shuffleWriteGB: Double,
                          peakExecutionMemoryGB: Double,
                          properties: Map[String, String],
                          endTs: Long,
+                         details: Option[String],
                        )
 
 case class ExecutorMetric(
