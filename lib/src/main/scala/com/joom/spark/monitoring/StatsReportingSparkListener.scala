@@ -18,8 +18,10 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable
 import scala.collection.JavaConverters._
 
-class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String,
-                                  stagePropertyNames: Set[String] = Set()) extends SparkListener {
+class StatsReportingSparkListener(sparkConf: SparkConf,
+                                  apiKey: String,
+                                  stagePropertyNames: Set[String] = Set(),
+                                  baseUrl: String = "https://api.cloud.joom.ai/v1/sparkperformance/") extends SparkListener {
 
   def this(sparkConf: SparkConf) = {
     this(sparkConf, {
@@ -273,7 +275,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String,
   private def sendReally(kind: String, json: String): Unit = {
     val body = RequestBody.create(MediaType.parse("application/json; charset=utf-8"), json)
     val request = new Request.Builder()
-      .url(BaseUrl + kind)
+      .url(baseUrl.stripSuffix("/") + "/" + kind)
       .addHeader("Authorization", "Bearer " + apiKey)
       .post(body)
       .build()
@@ -305,7 +307,6 @@ class StatsReportingSparkListener(sparkConf: SparkConf, apiKey: String,
 object StatsReportingSparkListener {
   private val GiB = math.pow(1024, 3)
   private val AppNameKey = "spark.app.name"
-  private val BaseUrl = "https://api.cloud.joom.ai/v1/sparkperformance/"
 
   def sigma(values: Seq[Double]) = {
     if (values.length < 2)

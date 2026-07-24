@@ -66,7 +66,9 @@ publishing {
         maven(MavenPublication) {
             groupId = 'com.joom.spark'
             artifactId = "spark-platform_$scalaVersion"
-            version = '0.4.10'
+            version = (
+                    project.findProperty('publication.version') ?: '0.4.11'
+            ).toString()
 
             from components.java
 
@@ -107,6 +109,16 @@ publishing {
     }
 
     repositories {
+        maven {
+            name = 'JoomMaven'
+            url = uri('https://jfrog.joom.it/artifactory/joom-maven')
+
+            credentials {
+                username = findProperty('jfrogMavenUser') ?: System.getenv('JFROG_USER')
+                password = findProperty('jfrogMavenPassword') ?: System.getenv('JFROG_PASSWORD')
+            }
+        }
+
         def mavenUrl = findProperty('publication.repository.maven.url')
         if (mavenUrl != null) {
             maven {

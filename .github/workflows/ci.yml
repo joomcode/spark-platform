@@ -40,15 +40,38 @@ jobs:
         if: contains(github.ref, '/tags/v') && matrix.spark == '3.5.0'
         # In Parallel mode, more than one repository will be created in sonatype, each incomplete,
         # so disable it.
-        run: >
-            ./gradlew publishMavenPublicationToSonatypeRepository
-            -Dorg.gradle.parallel=false
-            -Pscala.version=${{ matrix.scala }}
-            -Pspark.version=${{ matrix.spark}}
-            -Ppublication.repository.maven.name=Sonatype
-            -Ppublication.repository.maven.url=https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/
-            -Ppublication.repository.maven.username=${{ secrets.SONATYPE_USERNAME }}
-            -Ppublication.repository.maven.password=${{ secrets.SONATYPE_PASSWORD }}
-            -Ppublication.signing.keyId=${{ secrets.SIGNING_KEY_ID }}
-            -Ppublication.signing.password=${{ secrets.SIGNING_PASSWORD }}
-            -Ppublication.signing.secretKey='${{ secrets.SIGNING_SECRET_KEY }}' -i
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          SIGNING_SECRET_KEY: ${{ secrets.SIGNING_SECRET_KEY }}
+        run: |
+          ./gradlew publishMavenPublicationToSonatypeRepository \
+            -Dorg.gradle.parallel=false \
+            -Pscala.version=${{ matrix.scala }} \
+            -Pspark.version=${{ matrix.spark }} \
+            -Ppublication.repository.maven.name=Sonatype \
+            -Ppublication.repository.maven.url=https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/ \
+            "-Ppublication.repository.maven.username=$SONATYPE_USERNAME" \
+            "-Ppublication.repository.maven.password=$SONATYPE_PASSWORD" \
+            "-Ppublication.signing.keyId=$SIGNING_KEY_ID" \
+            "-Ppublication.signing.password=$SIGNING_PASSWORD" \
+            "-Ppublication.signing.secretKey=$SIGNING_SECRET_KEY" \
+            -i
+
+      - name: Publish Artifacts to Maven Central
+        if: contains(github.ref, '/tags/v') && matrix.spark == '3.5.0'
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: |
+          authorization="$(printf '%s:%s' "$SONATYPE_USERNAME" "$SONATYPE_PASSWORD" | base64 --wrap=0)"
+          curl \
+            --fail-with-body \
+            --show-error \
+            --silent \
+            --retry 3 \
+            --request POST \
+            --header "Authorization: Bearer $authorization" \
+            "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/com.joom.spark?publishing_type=automatic"
