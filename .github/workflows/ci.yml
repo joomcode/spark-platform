@@ -16,6 +16,10 @@ jobs:
       matrix:
         scala: [ '2.12.15', '2.13.8' ]
         spark: [ '3.2.4', '3.3.3', '3.4.1', '3.5.0' ]
+        include:
+          - scala: '2.13.18'
+            spark: '4.2.1'
+            java: 17
 
     steps:
       - name: Checkout
@@ -28,12 +32,10 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
-          java-version: 11
+          java-version: ${{ matrix.java || 11 }}
           cache: 'gradle'
 
       - name: Build and Test
-        env:
-          JOOM_CLOUD_TOKEN: ${{ secrets.JOOM_CLOUD_TOKEN }}
         run: ./gradlew build -Pscala.version=${{ matrix.scala }} -Pspark.version=${{ matrix.spark }} -i
 
       - name: Upload Artifacts

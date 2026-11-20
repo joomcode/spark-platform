@@ -1,11 +1,10 @@
 
 package com.joom.spark
 
-import org.apache.spark.sql.Strategy
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, RepartitionOperation}
 import org.apache.spark.sql.catalyst.plans.physical.{Distribution, HashPartitioning, Partitioning}
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy}
 import org.apache.spark.sql.execution.exchange.{REPARTITION_BY_NUM, ShuffleExchangeExec}
 
 // This extension allows to repartition a dataset with expression that gives
@@ -41,7 +40,7 @@ case class ExplicitRepartition(
   override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(child = newChild)
 }
 
-object ExplicitRepartitionStrategy extends Strategy {
+object ExplicitRepartitionStrategy extends SparkStrategy {
   def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
 
     case r: com.joom.spark.ExplicitRepartition =>

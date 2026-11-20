@@ -1,3 +1,5 @@
+import org.gradle.process.CommandLineArgumentProvider
+
 plugins {
     id 'scala'
     id 'java-library'
@@ -10,6 +12,12 @@ final def scalaLibraryVersion = getScalaLibraryVersion()
 
 final def sparkVersion = getSparkVersion()
 final def sparkLibraryVersion = getSparkLibraryVersion()
+final def isSpark4 = sparkVersion.startsWith('4.')
+final def targetJavaVersion = isSpark4 ? 17 : 8
+
+if (isSpark4 && scalaVersion != '2.13') {
+    throw new GradleException('Spark 4 requires Scala 2.13.')
+}
 
 dependencies {
     // We use Spark in API, so clients will need it when compiling
@@ -40,9 +48,43 @@ repositories {
 }
 
 java {
-    toolchain {
-        targetCompatibility = JavaLanguageVersion.of(8)
+    if (isSpark4) {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(17)
+        }
+    } else {
+        sourceCompatibility = JavaVersion.toVersion(targetJavaVersion)
+        targetCompatibility = JavaVersion.toVersion(targetJavaVersion)
     }
+}
+
+tasks.withType(Test).configureEach { testTask ->
+    // Direct SparkSession tests need the same JDK access normally added by spark-submit.
+    jvmArgumentProviders.add({
+        def javaVersion = testTask.javaLauncher.map { it.metadata.languageVersion.asInt() }
+                .getOrElse(JavaVersion.current().majorVersion.toInteger())
+        javaVersion >= 17 ? [
+            '--add-opens=java.base/java.lang=ALL-UNNAMED',
+            '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
+            '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+            '--add-opens=java.base/java.io=ALL-UNNAMED',
+            '--add-opens=java.base/java.net=ALL-UNNAMED',
+            '--add-opens=java.base/java.nio=ALL-UNNAMED',
+            '--add-opens=java.base/java.util=ALL-UNNAMED',
+            '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
+            '--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED',
+            '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
+            '--add-opens=java.base/sun.nio.cs=ALL-UNNAMED',
+            '--add-opens=java.base/sun.util.calendar=ALL-UNNAMED'
+        ] : []
+    } as CommandLineArgumentProvider)
+    environment 'SPARK_LOCAL_IP', '127.0.0.1'
+    systemProperty 'spark.ui.enabled', 'false'
+    def runtimeDirectory = layout.buildDirectory.dir("test-runtime/${name}").get().asFile
+    workingDir = runtimeDirectory
+    systemProperty 'java.io.tmpdir', new File(runtimeDirectory, 'tmp').absolutePath
+    systemProperty 'spark.sql.warehouse.dir', new File(runtimeDirectory, 'warehouse').toURI().toString()
+    doFirst { new File(runtimeDirectory, 'tmp').mkdirs() }
 }
 
 scaladoc {
@@ -67,7 +109,7 @@ publishing {
             groupId = 'com.joom.spark'
             artifactId = "spark-platform_$scalaVersion"
             version = (
-                    project.findProperty('publication.version') ?: '0.4.11'
+                    project.findProperty('publication.version') ?: (isSpark4 ? '0.4.11-joom-2' : '0.4.11')
             ).toString()
 
             from components.java
@@ -153,11 +195,24 @@ signing {
     }
 }
 
-getProperty('java.test.versions')
+(findProperty('java.test.versions') ?: (isSpark4 ? '17' : '8'))
     .split(',')
     .collect { JavaLanguageVersion.of(it).asInt() }
     .unique()
     .each { majorVersion ->
+        if (isSpark4 && majorVersion < 17) {
+            throw new GradleException('Spark 4 tests require Java 17 or newer.')
+        }
+        // The normal Spark 4 test task already uses the Java 17 toolchain.
+        if (isSpark4 && majorVersion == 17) {
+            def jdkTest = tasks.register('testJdk17') {
+                description = 'Runs the test suite on the Spark 4 Java 17 toolchain'
+                group = LifecycleBasePlugin.VERIFICATION_GROUP
+                dependsOn tasks.named('test')
+            }
+            tasks.named('check').configure { dependsOn(jdkTest) }
+            return
+        }
         def jdkTest = tasks.register("testJdk$majorVersion", Test) {
             javaLauncher = javaToolchains.launcherFor {
                 languageVersion = JavaLanguageVersion.of(majorVersion)
@@ -210,6 +265,7 @@ String getSparkVersion() {
     def parts = scalaVersion.split('\\.')
     switch (parts[0]) {
         case '3':
+        case '4':
             return "${parts[0]}.${parts[1]}"
         default:
             throw new IllegalArgumentException("Unsupported Spark version $scalaVersion")

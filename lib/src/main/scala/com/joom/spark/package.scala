@@ -2,9 +2,10 @@ package com.joom
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoders}
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
-import org.apache.spark.sql.catalyst.expressions.MillisToTs
-import org.apache.spark.sql.functions.{coalesce, col, concat, hash, lit, struct}
-import org.apache.spark.sql.types.{DataType, StructType, TimestampType}
+import org.apache.spark.sql.catalyst.expressions.{Alias, EqualTo, MillisToTs}
+import org.apache.spark.sql.catalyst.plans.logical.Project
+import org.apache.spark.sql.functions.{col, concat, hash, lit, struct, when}
+import org.apache.spark.sql.types.{DataType, StringType, StructType, TimestampType}
 
 import java.io.IOException
 
@@ -36,17 +37,16 @@ package object spark {
         }
         val sortColumns = sortColumnNames.flatMap { resolveColumn(_) }
         val comparisonColumns = comparisonColumnNames.flatMap { resolveColumn(_) }
-        val e = internal.rowEncoder(df.schema)
-        new DataFrame(sparkSession, DeduplicateWithinPartitions(sortColumns, comparisonColumns, df.queryExecution.analyzed), e)
+        internal.dataFrame(sparkSession,
+          DeduplicateWithinPartitions(sortColumns, comparisonColumns, df.queryExecution.analyzed))
       }
     }
 
     implicit class ExplicitRepartitionWrapper(df: DataFrame) {
       def explicitRepartition(numPartitions: Int, partitionExpression: Column): DataFrame = {
         val sparkSession = df.sparkSession
-        val e = internal.rowEncoder(df.schema)
-        new DataFrame(sparkSession,
-          ExplicitRepartition(partitionExpression.expr, df.queryExecution.analyzed, numPartitions), e)
+        internal.dataFrame(sparkSession,
+          ExplicitRepartition(internal.columnExpression(partitionExpression, sparkSession), df.queryExecution.analyzed, numPartitions))
       }
     }
 
@@ -95,16 +95,40 @@ package object spark {
     implicit class DatasetWrapper(ds: Dataset[_]) {
 
       def joinAvoidSkewDueToNulls(right: Dataset[_], leftJoinCol: String, rightJoinCol: String, joinType: String): DataFrame = {
-        val joinColName = "_joinColName"
+        val inputColumnNames = ds.columns ++ right.columns
+        val joinColName = Iterator.iterate("_joinColName")(_ + "_")
+          .find(name => !inputColumnNames.exists(_.equalsIgnoreCase(name))).get
 
         // Input to function hash cannot contain elements of MapType, since in Spark, same maps may have different hashcode.
         def colsWithoutMaps(ds: Dataset[_]) = ds.schema.fields
           .filterNot(_.dataType.catalogString.contains("map<"))
-          .map(f => col(f.name))
+          .map(f => ds(s"`${f.name.replace("`", "``")}`"))
 
-        val dsEx = ds.withColumn(joinColName, coalesce(ds(leftJoinCol), concat(lit("left"), hash(colsWithoutMaps(ds): _*))))
-        val rightEx = right.withColumn(joinColName, coalesce(right(rightJoinCol), concat(lit("right"), hash(colsWithoutMaps(right): _*))))
+        // Analyze scalar equality, without executing it, to reuse Spark's own
+        // ANSI, decimal, date and collation coercion before wrapping the keys.
+        val leftKey = ds.select(ds(leftJoinCol).as("_leftKey"))
+        val rightKey = right.select(right(rightJoinCol).as("_rightKey"))
+        val comparison = leftKey.crossJoin(rightKey)
+          .select((col("_leftKey") === col("_rightKey")).as("_comparison"))
+          .queryExecution.analyzed.asInstanceOf[Project].projectList.head
+        val (leftType, rightType) = comparison match {
+          case Alias(EqualTo(left, right), _) => (left.dataType, right.dataType)
+          case other => throw new IllegalStateException(s"Unexpected analyzed key equality: $other")
+        }
 
+        def withJoinKey(input: Dataset[_], name: String, prefix: String, keyType: DataType) = {
+          val key = input(name).cast(keyType)
+          val salt = when(key.isNull,
+            concat(lit(prefix), hash(colsWithoutMaps(input): _*).cast(StringType)))
+            .otherwise(lit(null).cast(StringType))
+          input.withColumn(joinColName, struct(key.as("value"), salt.as("nullSalt")))
+        }
+
+        val dsEx = withJoinKey(ds, leftJoinCol, "left", leftType)
+        val rightEx = withJoinKey(right, rightJoinCol, "right", rightType)
+
+        // One composite key keeps the salt in the shuffle even when Spark can
+        // prove that the other input's original key is never null.
         dsEx.join(rightEx, Seq(joinColName), joinType)
           .drop(joinColName)
       }

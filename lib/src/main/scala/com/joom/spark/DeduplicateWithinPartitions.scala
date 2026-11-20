@@ -2,12 +2,11 @@
 package com.joom.spark
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.Strategy
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, SortOrder, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, RowOrdering, SortOrder, UnsafeProjection}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy, UnaryExecNode}
 
 /** This module adds 'deduplicateWithinPartition' low-level method for deduplicating data.
   * The standard `dropDuplicates` method becomes `SortAggregateExec` and it causes
@@ -41,6 +40,9 @@ import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
       val filter = (it: Iterator[InternalRow]) => {
 
         val keysProjection = UnsafeProjection.create(comparisonKeys, child.output)
+        // SQL equality includes collations, signed zero and NaN normalization;
+        // UnsafeRow's binary equality does not provide those semantics.
+        val keyOrdering = RowOrdering.createNaturalAscendingOrdering(comparisonKeys.map(_.dataType))
         new Iterator[InternalRow] {
           var value: Option[InternalRow] = if (it.hasNext) Some(it.next().copy()) else None
           override def hasNext: Boolean = value.isDefined
@@ -52,7 +54,7 @@ import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
             while (it.hasNext && value.isEmpty) {
               val nextRow = it.next()
               val nextKeys = keysProjection(nextRow)
-              if (keyValues != nextKeys) {
+              if (keyOrdering.compare(keyValues, nextKeys) != 0) {
                 value = Some(nextRow.copy())
               }
             }
@@ -68,7 +70,7 @@ import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
     override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan = copy(child = newChild)
   }
 
-  object DeduplicateWithinPartitionsStrategy extends Strategy {
+  object DeduplicateWithinPartitionsStrategy extends SparkStrategy {
     def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
       case DeduplicateWithinPartitions(sortKeys, comparisonKeys, child) =>
         DeduplicateWithinPartitionsExec(sortKeys, comparisonKeys, planLater(child)) :: Nil

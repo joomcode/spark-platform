@@ -1,7 +1,7 @@
 package com.joom.spark
 
 import com.joom.spark.implicits.ExplicitRepartitionWrapper
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.functions._
 import org.junit.runner.RunWith
 import org.scalatest._
@@ -78,6 +78,16 @@ class ExplicitRepartitionSpec extends FlatSpec with Matchers with BeforeAndAfter
       Entry("c", 0, 0),
       Entry("d", 1, 1)
     ))
+  }
+
+  "explicitRepartition" should "preserve analysis errors for an invalid partition column" in {
+    val input = spark.range(1).toDF("value")
+
+    val error = intercept[AnalysisException] {
+      input.explicitRepartition(2, col("missing_partition")).collect()
+    }
+
+    error.getMessage should include ("missing_partition")
   }
 
 }

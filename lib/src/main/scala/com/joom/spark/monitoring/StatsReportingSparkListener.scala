@@ -84,7 +84,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf,
     // Break batches by event kind
     .filter(b => !b.isEmpty)
     .flatMapIterable((b: java.util.List[KindAndPayload]) => {
-      b.asScala.groupBy(_.kind).values.map(f => f.toSeq).toIterable.asJava
+      b.asScala.groupBy(_.kind).values.map(f => (f.toVector: Seq[KindAndPayload])).toIterable.asJava
     }: java.lang.Iterable[Seq[KindAndPayload]])
     // Do processing.
     .parallel(4)
@@ -144,7 +144,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf,
       finished = true,
       duration = Option(Duration.between(appStart, Instant.now()).toMillis / 1000L),
       executorMetrics = Some(executorMetrics.map { case (k, v) =>
-        (k, v.map { case (execId, value) => ExecutorMetric(execId, value)}.toSeq)
+        (k, v.map { case (execId, value) => ExecutorMetric(execId, value)}.toVector)
       }.toMap)
     ))
 
@@ -241,7 +241,7 @@ class StatsReportingSparkListener(sparkConf: SparkConf,
         val failureReason = state.failureReason
         val startTime = state.startTime
         val summary = summarizeStage(appId, stageFullId.stageId, stageFullId.attemptNumber, success, failureReason,
-          startTime, tasks.toSeq, state.properties, endTs, state.name)
+          startTime, tasks.toVector, state.properties, endTs, state.name)
 
         implicit val codec: JsonValueCodec[StageSummary] = JsonCodecMaker.make
         send("stages", summary.get)
